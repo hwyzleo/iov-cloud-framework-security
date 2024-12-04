@@ -1,6 +1,5 @@
 package net.hwyz.iov.cloud.framework.security.annotation;
 
-import net.hwyz.iov.cloud.framework.security.config.ApplicationConfig;
 import net.hwyz.iov.cloud.framework.security.feign.FeignAutoConfiguration;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
@@ -20,7 +19,7 @@ import java.lang.annotation.*;
 // 开启线程异步执行
 @EnableAsync
 // 自动加载类
-@Import({ApplicationConfig.class, FeignAutoConfiguration.class})
+@Import({FeignAutoConfiguration.class})
 public @interface EnableCustomConfig {
 
 }
