@@ -29,8 +29,8 @@ public class ApplicationConfig {
         // 设置时区为系统默认时区
         objectMapper.setTimeZone(TimeZone.getTimeZone(ZoneId.systemDefault()));
 
-        // 设置日期时间格式为ISO 8601
-        objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+        // 设置日期时间格式为时间戳
+        objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, true);
 
         // 忽略未知属性
         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
