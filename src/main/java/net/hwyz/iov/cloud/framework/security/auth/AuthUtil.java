@@ -3,7 +3,7 @@ package net.hwyz.iov.cloud.framework.security.auth;
 
 import net.hwyz.iov.cloud.framework.security.annotation.RequiresPermissions;
 import net.hwyz.iov.cloud.framework.security.annotation.RequiresRoles;
-import net.hwyz.iov.cloud.mpt.system.api.model.LoginUser;
+import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 
 /**
  * Token 权限验证工具类

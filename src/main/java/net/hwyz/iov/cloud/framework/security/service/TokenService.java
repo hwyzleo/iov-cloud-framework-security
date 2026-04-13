@@ -11,7 +11,7 @@ import net.hwyz.iov.cloud.framework.common.util.JwtUtil;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.redis.service.RedisService;
 import net.hwyz.iov.cloud.framework.security.util.SecurityUtils;
-import net.hwyz.iov.cloud.mpt.system.api.model.LoginUser;
+import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;

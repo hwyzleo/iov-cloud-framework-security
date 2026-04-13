@@ -2,7 +2,7 @@ package net.hwyz.iov.cloud.framework.security.aspect;
 
 import cn.hutool.core.util.StrUtil;
 import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
-import net.hwyz.iov.cloud.framework.common.exception.InnerAuthException;
+import net.hwyz.iov.cloud.framework.web.exception.InnerAuthException;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.security.annotation.InnerAuth;
 import org.aspectj.lang.ProceedingJoinPoint;

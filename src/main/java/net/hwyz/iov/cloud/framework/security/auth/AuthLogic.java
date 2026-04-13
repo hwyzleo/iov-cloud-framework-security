@@ -2,18 +2,18 @@ package net.hwyz.iov.cloud.framework.security.auth;
 
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
-import net.hwyz.iov.cloud.framework.common.context.SecurityContextHolder;
-import net.hwyz.iov.cloud.framework.common.exception.NotLoginException;
-import net.hwyz.iov.cloud.framework.common.exception.NotPermissionException;
-import net.hwyz.iov.cloud.framework.common.exception.NotRoleException;
-import net.hwyz.iov.cloud.framework.common.util.SpringUtil;
+import net.hwyz.iov.cloud.edd.mpt.api.exception.NotLoginException;
+import net.hwyz.iov.cloud.edd.mpt.api.exception.NotPermissionException;
+import net.hwyz.iov.cloud.edd.mpt.api.exception.NotRoleException;
+import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import net.hwyz.iov.cloud.framework.security.annotation.Logical;
 import net.hwyz.iov.cloud.framework.security.annotation.RequiresLogin;
 import net.hwyz.iov.cloud.framework.security.annotation.RequiresPermissions;
 import net.hwyz.iov.cloud.framework.security.annotation.RequiresRoles;
 import net.hwyz.iov.cloud.framework.security.service.TokenService;
 import net.hwyz.iov.cloud.framework.security.util.SecurityUtils;
-import net.hwyz.iov.cloud.mpt.system.api.model.LoginUser;
+import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
+import net.hwyz.iov.cloud.framework.web.util.SpringUtil;
 import org.springframework.util.PatternMatchUtils;
 
 import java.util.Collection;

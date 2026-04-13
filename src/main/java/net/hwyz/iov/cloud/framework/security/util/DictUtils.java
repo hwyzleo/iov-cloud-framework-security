@@ -5,7 +5,7 @@ import cn.hutool.extra.spring.SpringUtil;
 import com.alibaba.fastjson2.JSONArray;
 import net.hwyz.iov.cloud.framework.common.constant.CacheConstants;
 import net.hwyz.iov.cloud.framework.redis.service.RedisService;
-import net.hwyz.iov.cloud.mpt.system.api.domain.SysDictData;
+import net.hwyz.iov.cloud.edd.mpt.api.domain.SysDictData;
 
 import java.util.Collection;
 import java.util.List;

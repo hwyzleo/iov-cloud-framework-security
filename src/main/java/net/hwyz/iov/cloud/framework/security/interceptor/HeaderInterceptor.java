@@ -5,11 +5,11 @@ import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
-import net.hwyz.iov.cloud.framework.common.context.SecurityContextHolder;
+import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.security.auth.AuthUtil;
 import net.hwyz.iov.cloud.framework.security.util.SecurityUtils;
-import net.hwyz.iov.cloud.mpt.system.api.model.LoginUser;
+import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.AsyncHandlerInterceptor;
 

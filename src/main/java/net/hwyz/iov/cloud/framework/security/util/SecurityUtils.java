@@ -4,9 +4,9 @@ import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
 import net.hwyz.iov.cloud.framework.common.constant.TokenConstants;
-import net.hwyz.iov.cloud.framework.common.context.SecurityContextHolder;
+import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
-import net.hwyz.iov.cloud.mpt.system.api.model.LoginUser;
+import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 
