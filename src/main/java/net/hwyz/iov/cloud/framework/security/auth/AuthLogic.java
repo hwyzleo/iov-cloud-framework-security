@@ -36,7 +36,14 @@ public class AuthLogic {
      */
     private static final String SUPER_ADMIN = "admin";
 
-    public TokenService tokenService = SpringUtil.getBean(TokenService.class);
+    private TokenService tokenService;
+
+    public TokenService getTokenService() {
+        if (tokenService == null) {
+            tokenService = SpringUtil.getBean(TokenService.class);
+        }
+        return tokenService;
+    }
 
     /**
      * 会话注销
@@ -53,7 +60,7 @@ public class AuthLogic {
      * 会话注销，根据指定Token
      */
     public void logoutByToken(String token) {
-        tokenService.delLoginUser(token);
+        getTokenService().delLoginUser(token);
     }
 
     /**
@@ -87,7 +94,7 @@ public class AuthLogic {
      * @return 用户缓存信息
      */
     public LoginUser getLoginUser(String token) {
-        return tokenService.getLoginUser(token);
+        return getTokenService().getLoginUser(token);
     }
 
     /**
@@ -96,7 +103,7 @@ public class AuthLogic {
      * @param loginUser 当前用户信息
      */
     public void verifyLoginUserExpire(LoginUser loginUser) {
-        tokenService.verifyToken(loginUser);
+        getTokenService().verifyToken(loginUser);
     }
 
     /**
