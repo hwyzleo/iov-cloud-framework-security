@@ -5,7 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import feign.RequestInterceptor;
 import feign.RequestTemplate;
 import jakarta.servlet.http.HttpServletRequest;
-import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
+import net.hwyz.iov.cloud.framework.common.constant.SecurityConstants;
 import net.hwyz.iov.cloud.framework.common.util.IpUtil;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import org.springframework.stereotype.Component;
@@ -25,21 +25,21 @@ public class FeignRequestInterceptor implements RequestInterceptor {
         if (ObjUtil.isNotNull(httpServletRequest)) {
             Map<String, String> headers = ServletUtil.getHeaders(httpServletRequest);
             // 传递用户信息请求头，防止丢失
-            String userId = headers.get(MptSecurityConstants.DETAILS_USER_ID);
+            String userId = headers.get(SecurityConstants.USER_ID);
             if (StrUtil.isNotEmpty(userId)) {
-                requestTemplate.header(MptSecurityConstants.DETAILS_USER_ID, userId);
+                requestTemplate.header(SecurityConstants.USER_ID, userId);
             }
-            String userKey = headers.get(MptSecurityConstants.USER_KEY);
+            String userKey = headers.get(SecurityConstants.USER_KEY);
             if (StrUtil.isNotEmpty(userKey)) {
-                requestTemplate.header(MptSecurityConstants.USER_KEY, userKey);
+                requestTemplate.header(SecurityConstants.USER_KEY, userKey);
             }
-            String userName = headers.get(MptSecurityConstants.DETAILS_USERNAME);
+            String userName = headers.get(SecurityConstants.USERNAME);
             if (StrUtil.isNotEmpty(userName)) {
-                requestTemplate.header(MptSecurityConstants.DETAILS_USERNAME, userName);
+                requestTemplate.header(SecurityConstants.USERNAME, userName);
             }
-            String authentication = headers.get(MptSecurityConstants.AUTHORIZATION_HEADER);
+            String authentication = headers.get(SecurityConstants.AUTHORIZATION_HEADER);
             if (StrUtil.isNotEmpty(authentication)) {
-                requestTemplate.header(MptSecurityConstants.AUTHORIZATION_HEADER, authentication);
+                requestTemplate.header(SecurityConstants.AUTHORIZATION_HEADER, authentication);
             }
 
             // 配置客户端IP

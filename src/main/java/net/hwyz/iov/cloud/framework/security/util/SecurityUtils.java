@@ -2,7 +2,7 @@ package net.hwyz.iov.cloud.framework.security.util;
 
 import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
-import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
+import net.hwyz.iov.cloud.framework.common.constant.SecurityConstants;
 import net.hwyz.iov.cloud.framework.common.constant.TokenConstants;
 import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
@@ -20,7 +20,7 @@ public class SecurityUtils {
      * 获取用户ID
      */
     public static Long getUserId() {
-        return SecurityContextHolder.getUserId();
+        return Long.valueOf(SecurityContextHolder.getUserId());
     }
 
     /**
@@ -41,7 +41,7 @@ public class SecurityUtils {
      * 获取登录用户信息
      */
     public static LoginUser getLoginUser() {
-        return SecurityContextHolder.get(MptSecurityConstants.LOGIN_USER, LoginUser.class);
+        return SecurityContextHolder.get(SecurityConstants.LOGIN_USER, LoginUser.class);
     }
 
     /**
@@ -56,7 +56,7 @@ public class SecurityUtils {
      */
     public static String getToken(HttpServletRequest request) {
         // 从header获取token标识
-        String token = request.getHeader(MptSecurityConstants.AUTHORIZATION_HEADER);
+        String token = request.getHeader(SecurityConstants.AUTHORIZATION_HEADER);
         return replaceTokenPrefix(token);
     }
 

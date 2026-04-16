@@ -5,7 +5,7 @@ import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import net.hwyz.iov.cloud.framework.common.constant.CacheConstants;
-import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
+import net.hwyz.iov.cloud.framework.common.constant.SecurityConstants;
 import net.hwyz.iov.cloud.framework.common.util.IpUtil;
 import net.hwyz.iov.cloud.framework.common.util.JwtUtil;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
@@ -58,9 +58,9 @@ public class TokenService {
 
         // Jwt存储信息
         Map<String, Object> claimsMap = new HashMap<String, Object>();
-        claimsMap.put(MptSecurityConstants.USER_KEY, token);
-        claimsMap.put(MptSecurityConstants.DETAILS_USER_ID, userId);
-        claimsMap.put(MptSecurityConstants.DETAILS_USERNAME, userName);
+        claimsMap.put(SecurityConstants.USER_KEY, token);
+        claimsMap.put(SecurityConstants.USER_ID, userId);
+        claimsMap.put(SecurityConstants.USERNAME, userName);
 
         // 接口返回信息
         Map<String, Object> rspMap = new HashMap<String, Object>();
