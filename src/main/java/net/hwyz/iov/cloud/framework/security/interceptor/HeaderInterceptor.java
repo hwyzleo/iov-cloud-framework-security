@@ -4,7 +4,7 @@ import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import net.hwyz.iov.cloud.framework.common.constant.MptSecurityConstants;
+import net.hwyz.iov.cloud.framework.common.constant.SecurityConstants;
 import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.security.service.TokenService;
@@ -29,9 +29,9 @@ public class HeaderInterceptor implements AsyncHandlerInterceptor {
             return true;
         }
 
-        SecurityContextHolder.setUserId(ServletUtil.getHeader(request, MptSecurityConstants.DETAILS_USER_ID));
-        SecurityContextHolder.setUserName(ServletUtil.getHeader(request, MptSecurityConstants.DETAILS_USERNAME));
-        SecurityContextHolder.setUserKey(ServletUtil.getHeader(request, MptSecurityConstants.USER_KEY));
+        SecurityContextHolder.setUserId(ServletUtil.getHeader(request, SecurityConstants.USER_ID));
+        SecurityContextHolder.setUserName(ServletUtil.getHeader(request, SecurityConstants.USERNAME));
+        SecurityContextHolder.setUserKey(ServletUtil.getHeader(request, SecurityConstants.USER_KEY));
 
         String token = SecurityUtils.getToken();
         if (StrUtil.isNotEmpty(token)) {
@@ -39,7 +39,7 @@ public class HeaderInterceptor implements AsyncHandlerInterceptor {
             LoginUser loginUser = tokenService.getLoginUser(token);
             if (ObjUtil.isNotNull(loginUser)) {
                 tokenService.verifyToken(loginUser);
-                SecurityContextHolder.set(MptSecurityConstants.LOGIN_USER, loginUser);
+                SecurityContextHolder.set(SecurityConstants.LOGIN_USER, loginUser);
             }
         }
         return true;
