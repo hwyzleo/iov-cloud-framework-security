@@ -10,7 +10,7 @@ import net.hwyz.iov.cloud.framework.common.util.IpUtil;
 import net.hwyz.iov.cloud.framework.common.util.JwtUtil;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.redis.service.RedisService;
-import net.hwyz.iov.cloud.framework.security.util.SecurityUtils;
+import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,7 +85,7 @@ public class TokenService {
      */
     public LoginUser getLoginUser(HttpServletRequest request) {
         // 获取请求携带的令牌
-        String token = SecurityUtils.getToken(request);
+        String token = SecurityContextHolder.getToken(request);
         return getLoginUser(token);
     }
 

@@ -49,7 +49,7 @@ public class AuthLogic {
      * 会话注销
      */
     public void logout() {
-        String token = SecurityUtils.getToken();
+        String token = SecurityContextHolder.getToken();
         if (token == null) {
             return;
         }
@@ -76,7 +76,7 @@ public class AuthLogic {
      * @return 用户缓存信息
      */
     public LoginUser getLoginUser() {
-        String token = SecurityUtils.getToken();
+        String token = SecurityContextHolder.getToken();
         if (token == null) {
             throw new NotLoginException("未提供token");
         }

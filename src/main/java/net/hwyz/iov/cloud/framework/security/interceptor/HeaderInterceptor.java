@@ -8,7 +8,6 @@ import net.hwyz.iov.cloud.framework.common.constant.SecurityConstants;
 import net.hwyz.iov.cloud.framework.web.context.SecurityContextHolder;
 import net.hwyz.iov.cloud.framework.common.util.ServletUtil;
 import net.hwyz.iov.cloud.framework.security.service.TokenService;
-import net.hwyz.iov.cloud.framework.security.util.SecurityUtils;
 import net.hwyz.iov.cloud.edd.mpt.api.model.LoginUser;
 import net.hwyz.iov.cloud.framework.web.util.SpringUtil;
 import org.springframework.web.method.HandlerMethod;
@@ -33,7 +32,7 @@ public class HeaderInterceptor implements AsyncHandlerInterceptor {
         SecurityContextHolder.setUserName(ServletUtil.getHeader(request, SecurityConstants.USERNAME));
         SecurityContextHolder.setUserKey(ServletUtil.getHeader(request, SecurityConstants.USER_KEY));
 
-        String token = SecurityUtils.getToken();
+        String token = SecurityContextHolder.getToken();
         if (StrUtil.isNotEmpty(token)) {
             TokenService tokenService = SpringUtil.getBean(TokenService.class);
             LoginUser loginUser = tokenService.getLoginUser(token);
