@@ -2,8 +2,8 @@ package net.hwyz.iov.cloud.framework.security.handler;
 
 import jakarta.servlet.http.HttpServletRequest;
 import net.hwyz.iov.cloud.framework.common.bean.ApiResponse;
+import net.hwyz.iov.cloud.framework.common.exception.CommonErrorCode;
 import net.hwyz.iov.cloud.framework.web.exception.InnerAuthException;
-import net.hwyz.iov.cloud.framework.web.exception.WebErrorCode;
 import net.hwyz.iov.cloud.edd.mpt.api.exception.NotPermissionException;
 import net.hwyz.iov.cloud.edd.mpt.api.exception.NotRoleException;
 import net.hwyz.iov.cloud.edd.mpt.api.exception.MptErrorCode;
@@ -51,7 +51,7 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleInnerAuthException(InnerAuthException e, HttpServletRequest request) {
         String requestURI = request.getRequestURI();
         log.error("请求地址'{}',内部认证失败'{}'", requestURI, e.getMessage());
-        return ApiResponse.fail(WebErrorCode.INNER_AUTH_FAILED, e.getMessage());
+        return ApiResponse.fail(CommonErrorCode.INTERNAL_ERROR, e.getMessage());
     }
 
 }
