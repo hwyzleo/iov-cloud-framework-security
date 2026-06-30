@@ -4,6 +4,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
+import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.FeignKmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
@@ -41,6 +42,12 @@ public class CryptoAutoConfiguration {
     @ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
     public KmsClient kmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient) {
         return new FeignKmsClient(properties, kmsFeignClient);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public KmsClient defaultKmsClient() {
+        return new DefaultKmsClient();
     }
 
     @Bean
