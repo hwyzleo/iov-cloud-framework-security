@@ -3,3 +3,4 @@ net.hwyz.iov.cloud.framework.security.service.TokenService
 net.hwyz.iov.cloud.framework.security.aspect.PreAuthorizeAspect
 net.hwyz.iov.cloud.framework.security.aspect.InnerAuthAspect
 net.hwyz.iov.cloud.framework.security.handler.GlobalExceptionHandler
+net.hwyz.iov.cloud.framework.security.crypto.config.CryptoAutoConfiguration
