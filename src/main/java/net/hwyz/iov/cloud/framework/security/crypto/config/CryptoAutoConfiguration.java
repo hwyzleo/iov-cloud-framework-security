@@ -61,7 +61,8 @@ public class CryptoAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public CryptoTemplate cryptoTemplate(DeviceResolver deviceResolver, KeyCache keyCache,
-                                         AeadCipher aeadCipher, EnvelopeCodec envelopeCodec) {
-        return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec);
+                                         AeadCipher aeadCipher, EnvelopeCodec envelopeCodec,
+                                         CryptoMetrics cryptoMetrics) {
+        return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec, cryptoMetrics);
     }
 }
