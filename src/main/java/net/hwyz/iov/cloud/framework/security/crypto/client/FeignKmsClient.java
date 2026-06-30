@@ -3,15 +3,10 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
-import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.stereotype.Component;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 
 /**
  * Feign KMS客户端实现
  */
-@Component
 public class FeignKmsClient implements KmsClient {
 
     private final CryptoProperties properties;
@@ -28,7 +23,8 @@ public class FeignKmsClient implements KmsClient {
             DataKeyRequest request = new DataKeyRequest();
             request.setDeviceSn(deviceSn);
             request.setBizDomain(bizDomain);
-            return kmsFeignClient.getActiveDataKey(request);
+            WrappedKeyResponse response = kmsFeignClient.getActiveDataKey(request);
+            return convertToWrappedKey(response);
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to get active data key from KMS", e);
         }
@@ -39,7 +35,8 @@ public class FeignKmsClient implements KmsClient {
         try {
             DataKeyByIdRequest request = new DataKeyByIdRequest();
             request.setKeyId(keyId);
-            return kmsFeignClient.getDataKeyById(request);
+            WrappedKeyResponse response = kmsFeignClient.getDataKeyById(request);
+            return convertToWrappedKey(response);
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to get data key by ID from KMS", e);
         }
@@ -59,17 +56,42 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
-    @FeignClient(name = "kms-service", url = "${crypto.kms.endpoint}")
-    public interface KmsFeignClient {
+    private WrappedKey convertToWrappedKey(WrappedKeyResponse response) {
+        WrappedKey wrapped = new WrappedKey();
+        wrapped.setKeyId(response.getKeyId());
+        wrapped.setKeyVersion(response.getKeyVersion());
+        wrapped.setWrappedDek(response.getWrappedDek());
+        return wrapped;
+    }
 
-        @PostMapping("/transit/datakey")
-        WrappedKey getActiveDataKey(@RequestBody DataKeyRequest request);
+    public static class WrappedKeyResponse {
+        private String keyId;
+        private int keyVersion;
+        private byte[] wrappedDek;
 
-        @PostMapping("/transit/datakey/by-id")
-        WrappedKey getDataKeyById(@RequestBody DataKeyByIdRequest request);
+        public String getKeyId() {
+            return keyId;
+        }
 
-        @PostMapping("/transit/decrypt")
-        UnwrapResponse unwrap(@RequestBody UnwrapRequest request);
+        public void setKeyId(String keyId) {
+            this.keyId = keyId;
+        }
+
+        public int getKeyVersion() {
+            return keyVersion;
+        }
+
+        public void setKeyVersion(int keyVersion) {
+            this.keyVersion = keyVersion;
+        }
+
+        public byte[] getWrappedDek() {
+            return wrappedDek;
+        }
+
+        public void setWrappedDek(byte[] wrappedDek) {
+            this.wrappedDek = wrappedDek;
+        }
     }
 
     public static class DataKeyRequest {

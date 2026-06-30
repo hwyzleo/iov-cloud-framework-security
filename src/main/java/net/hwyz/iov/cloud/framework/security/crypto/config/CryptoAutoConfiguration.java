@@ -6,12 +6,14 @@ import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.FeignKmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
@@ -36,7 +38,8 @@ public class CryptoAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public KmsClient kmsClient(CryptoProperties properties, FeignKmsClient.KmsFeignClient kmsFeignClient) {
+    @ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
+    public KmsClient kmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient) {
         return new FeignKmsClient(properties, kmsFeignClient);
     }
 
