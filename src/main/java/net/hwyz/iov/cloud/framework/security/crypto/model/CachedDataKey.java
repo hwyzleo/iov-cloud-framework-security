@@ -14,7 +14,7 @@ public class CachedDataKey implements Serializable {
     private String keyId;
     private int keyVersion;
     private transient byte[] dekPlaintext;
-    private String bizDomain;
+    private BizType bizType;
     private String deviceSn;
     private Instant expireAt;
 
@@ -45,12 +45,12 @@ public class CachedDataKey implements Serializable {
         this.dekPlaintext = dekPlaintext;
     }
 
-    public String getBizDomain() {
-        return bizDomain;
+    public BizType getBizType() {
+        return bizType;
     }
 
-    public void setBizDomain(String bizDomain) {
-        this.bizDomain = bizDomain;
+    public void setBizType(BizType bizType) {
+        this.bizType = bizType;
     }
 
     public String getDeviceSn() {
@@ -77,14 +77,14 @@ public class CachedDataKey implements Serializable {
         return keyVersion == that.keyVersion
                 && java.util.Objects.equals(keyId, that.keyId)
                 && Arrays.equals(dekPlaintext, that.dekPlaintext)
-                && java.util.Objects.equals(bizDomain, that.bizDomain)
+                && java.util.Objects.equals(bizType, that.bizType)
                 && java.util.Objects.equals(deviceSn, that.deviceSn)
                 && java.util.Objects.equals(expireAt, that.expireAt);
     }
 
     @Override
     public int hashCode() {
-        int result = java.util.Objects.hash(keyId, keyVersion, bizDomain, deviceSn, expireAt);
+        int result = java.util.Objects.hash(keyId, keyVersion, bizType, deviceSn, expireAt);
         result = 31 * result + Arrays.hashCode(dekPlaintext);
         return result;
     }
@@ -92,7 +92,7 @@ public class CachedDataKey implements Serializable {
     @Override
     public String toString() {
         return "CachedDataKey{keyId='" + keyId + "', keyVersion=" + keyVersion
-                + ", bizDomain='" + bizDomain + "', deviceSn='" + deviceSn
+                + ", bizType=" + bizType + ", deviceSn='" + deviceSn
                 + "', expireAt=" + expireAt + "}";
     }
 }

@@ -2,6 +2,8 @@ package net.hwyz.iov.cloud.framework.security.crypto.config;
 
 import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
@@ -12,6 +14,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -52,6 +55,7 @@ public class CryptoAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto", name = "envelope-enabled", havingValue = "true", matchIfMissing = true)
     public DeviceResolver deviceResolver(CryptoProperties properties) {
         return new DefaultDeviceResolver(properties);
     }
@@ -70,9 +74,20 @@ public class CryptoAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto", name = "envelope-enabled", havingValue = "true", matchIfMissing = true)
     public CryptoTemplate cryptoTemplate(DeviceResolver deviceResolver, KeyCache keyCache,
                                          AeadCipher aeadCipher, EnvelopeCodec envelopeCodec,
                                          CryptoMetrics cryptoMetrics) {
         return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec, cryptoMetrics);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning", name = "enabled", havingValue = "true")
+    public KeyProvisioningTemplate keyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
+                                                           CryptoProperties properties,
+                                                           ObjectProvider<DeviceResolver> deviceResolverProvider) {
+        return new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
+                deviceResolverProvider.getIfAvailable());
     }
 }

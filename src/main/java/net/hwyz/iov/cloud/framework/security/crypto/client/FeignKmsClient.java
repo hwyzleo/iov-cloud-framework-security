@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
+import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
 /**
@@ -18,11 +19,11 @@ public class FeignKmsClient implements KmsClient {
     }
 
     @Override
-    public WrappedKey getActiveDataKey(String deviceSn, String bizDomain) {
+    public WrappedKey getActiveDataKey(String deviceSn, BizType bizType) {
         try {
             DataKeyRequest request = new DataKeyRequest();
             request.setDeviceSn(deviceSn);
-            request.setBizDomain(bizDomain);
+            request.setBizType(bizType.name());
             WrappedKeyResponse response = kmsFeignClient.getActiveDataKey(request);
             return convertToWrappedKey(response);
         } catch (Exception e) {
@@ -53,6 +54,45 @@ public class FeignKmsClient implements KmsClient {
             return response.getDekPlaintext();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to unwrap key from KMS", e);
+        }
+    }
+
+    @Override
+    public byte[] hmac(String keyName, byte[] input) {
+        try {
+            HmacRequest request = new HmacRequest();
+            request.setKeyName(keyName);
+            request.setInput(input);
+            HmacResponse response = kmsFeignClient.hmac(request);
+            return response.getHmac();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to compute HMAC from KMS", e);
+        }
+    }
+
+    @Override
+    public byte[] encryptWith(String keyName, byte[] plaintext) {
+        try {
+            EncryptWithRequest request = new EncryptWithRequest();
+            request.setKeyName(keyName);
+            request.setPlaintext(plaintext);
+            EncryptWithResponse response = kmsFeignClient.encryptWith(request);
+            return response.getCiphertext();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to encrypt with named key from KMS", e);
+        }
+    }
+
+    @Override
+    public byte[] decryptWith(String keyName, byte[] ciphertext) {
+        try {
+            DecryptWithRequest request = new DecryptWithRequest();
+            request.setKeyName(keyName);
+            request.setCiphertext(ciphertext);
+            DecryptWithResponse response = kmsFeignClient.decryptWith(request);
+            return response.getPlaintext();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to decrypt with named key from KMS", e);
         }
     }
 
@@ -96,7 +136,7 @@ public class FeignKmsClient implements KmsClient {
 
     public static class DataKeyRequest {
         private String deviceSn;
-        private String bizDomain;
+        private String bizType;
 
         public String getDeviceSn() {
             return deviceSn;
@@ -106,12 +146,12 @@ public class FeignKmsClient implements KmsClient {
             this.deviceSn = deviceSn;
         }
 
-        public String getBizDomain() {
-            return bizDomain;
+        public String getBizType() {
+            return bizType;
         }
 
-        public void setBizDomain(String bizDomain) {
-            this.bizDomain = bizDomain;
+        public void setBizType(String bizType) {
+            this.bizType = bizType;
         }
     }
 
@@ -166,6 +206,105 @@ public class FeignKmsClient implements KmsClient {
 
         public void setDekPlaintext(byte[] dekPlaintext) {
             this.dekPlaintext = dekPlaintext;
+        }
+    }
+
+    public static class HmacRequest {
+        private String keyName;
+        private byte[] input;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public byte[] getInput() {
+            return input;
+        }
+
+        public void setInput(byte[] input) {
+            this.input = input;
+        }
+    }
+
+    public static class HmacResponse {
+        private byte[] hmac;
+
+        public byte[] getHmac() {
+            return hmac;
+        }
+
+        public void setHmac(byte[] hmac) {
+            this.hmac = hmac;
+        }
+    }
+
+    public static class EncryptWithRequest {
+        private String keyName;
+        private byte[] plaintext;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public byte[] getPlaintext() {
+            return plaintext;
+        }
+
+        public void setPlaintext(byte[] plaintext) {
+            this.plaintext = plaintext;
+        }
+    }
+
+    public static class EncryptWithResponse {
+        private byte[] ciphertext;
+
+        public byte[] getCiphertext() {
+            return ciphertext;
+        }
+
+        public void setCiphertext(byte[] ciphertext) {
+            this.ciphertext = ciphertext;
+        }
+    }
+
+    public static class DecryptWithRequest {
+        private String keyName;
+        private byte[] ciphertext;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public byte[] getCiphertext() {
+            return ciphertext;
+        }
+
+        public void setCiphertext(byte[] ciphertext) {
+            this.ciphertext = ciphertext;
+        }
+    }
+
+    public static class DecryptWithResponse {
+        private byte[] plaintext;
+
+        public byte[] getPlaintext() {
+            return plaintext;
+        }
+
+        public void setPlaintext(byte[] plaintext) {
+            this.plaintext = plaintext;
         }
     }
 }

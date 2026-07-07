@@ -21,4 +21,13 @@ public interface KmsFeignClient {
 
     @PostMapping("/transit/decrypt")
     FeignKmsClient.UnwrapResponse unwrap(@RequestBody FeignKmsClient.UnwrapRequest request);
+
+    @PostMapping("/transit/hmac")
+    FeignKmsClient.HmacResponse hmac(@RequestBody FeignKmsClient.HmacRequest request);
+
+    @PostMapping("/transit/encrypt")
+    FeignKmsClient.EncryptWithResponse encryptWith(@RequestBody FeignKmsClient.EncryptWithRequest request);
+
+    @PostMapping("/transit/decrypt-named")
+    FeignKmsClient.DecryptWithResponse decryptWith(@RequestBody FeignKmsClient.DecryptWithRequest request);
 }

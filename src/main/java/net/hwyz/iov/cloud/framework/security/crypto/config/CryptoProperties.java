@@ -37,14 +37,19 @@ public class CryptoProperties {
     private String alg = "AES_256_GCM";
 
     /**
-     * 业务域→器件类别路由表
-     */
-    private Map<String, String> deviceRouting = new HashMap<>();
-
-    /**
      * 失败策略（CLOSED/OPEN）
      */
     private String failMode = "CLOSED";
+
+    /**
+     * 信封加解密是否启用
+     */
+    private boolean envelopeEnabled = true;
+
+    /**
+     * 密钥派生/封装下发配置
+     */
+    private Provisioning provisioning = new Provisioning();
 
     public Kms getKms() {
         return kms;
@@ -78,20 +83,28 @@ public class CryptoProperties {
         this.alg = alg;
     }
 
-    public Map<String, String> getDeviceRouting() {
-        return deviceRouting;
-    }
-
-    public void setDeviceRouting(Map<String, String> deviceRouting) {
-        this.deviceRouting = deviceRouting;
-    }
-
     public String getFailMode() {
         return failMode;
     }
 
     public void setFailMode(String failMode) {
         this.failMode = failMode;
+    }
+
+    public boolean isEnvelopeEnabled() {
+        return envelopeEnabled;
+    }
+
+    public void setEnvelopeEnabled(boolean envelopeEnabled) {
+        this.envelopeEnabled = envelopeEnabled;
+    }
+
+    public Provisioning getProvisioning() {
+        return provisioning;
+    }
+
+    public void setProvisioning(Provisioning provisioning) {
+        this.provisioning = provisioning;
     }
 
     /**
@@ -197,6 +210,37 @@ public class CryptoProperties {
 
         public void setTtl(Duration ttl) {
             this.ttl = ttl;
+        }
+    }
+
+    /**
+     * 密钥派生/封装下发配置
+     */
+    public static class Provisioning {
+        /**
+         * 是否启用派生/封装门面装配
+         */
+        private boolean enabled = false;
+
+        /**
+         * KMS提供方（写入 ProvisioningResult.provider）
+         */
+        private String provider = "Vault-Transit";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
         }
     }
 }

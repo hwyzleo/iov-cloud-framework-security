@@ -3,7 +3,9 @@ package net.hwyz.iov.cloud.framework.security.crypto;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
+import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CachedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CipherPayload;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnvelopeHeader;
@@ -37,14 +39,20 @@ public class DefaultCryptoTemplate implements CryptoTemplate {
     }
 
     @Override
-    public byte[] encrypt(String vin, String bizDomain, byte[] plaintext) {
+    public byte[] encrypt(String vin, BizType bizType, byte[] plaintext) {
         long startTime = System.currentTimeMillis();
         try {
+            // 验证bizType支持信封加解密（supportsData），不支持则 fail-closed
+            if (!bizType.supportsData()) {
+                throw new CryptoException(CryptoException.Reason.INVALID_BIZ_TYPE,
+                        "BizType does not support data encryption: " + bizType.name()) {};
+            }
+
             // 1. 解析设备SN
-            String deviceSn = deviceResolver.resolveDeviceSn(vin, bizDomain);
+            String deviceSn = deviceResolver.resolveDeviceSn(vin, bizType);
 
             // 2. 获取数据密钥
-            CachedDataKey dataKey = keyCache.get(deviceSn, bizDomain);
+            CachedDataKey dataKey = keyCache.get(deviceSn, bizType);
 
             // 3. 生成IV
             byte[] iv = aeadCipher.generateIv();
@@ -68,14 +76,14 @@ public class DefaultCryptoTemplate implements CryptoTemplate {
 
             // 记录审计日志
             long duration = System.currentTimeMillis() - startTime;
-            log.info("加密成功: vin={}, bizDomain={}, keyId={}, duration={}ms", 
-                    vin, bizDomain, dataKey.getKeyId(), duration);
+            log.info("加密成功: vin={}, bizType={}, keyId={}, duration={}ms",
+                    vin, bizType.name(), dataKey.getKeyId(), duration);
             cryptoMetrics.recordEncrypt(duration);
 
             return result;
         } catch (Exception e) {
             cryptoMetrics.recordError();
-            log.error("加密失败: vin={}, bizDomain={}", vin, bizDomain, e);
+            log.error("加密失败: vin={}, bizType={}", vin, bizType.name(), e);
             throw e;
         }
     }
@@ -99,7 +107,7 @@ public class DefaultCryptoTemplate implements CryptoTemplate {
 
             // 记录审计日志
             long duration = System.currentTimeMillis() - startTime;
-            log.info("解密成功: keyId={}, keyVersion={}, duration={}ms", 
+            log.info("解密成功: keyId={}, keyVersion={}, duration={}ms",
                     header.getKeyId(), header.getKeyVersion(), duration);
             cryptoMetrics.recordDecrypt(duration);
 

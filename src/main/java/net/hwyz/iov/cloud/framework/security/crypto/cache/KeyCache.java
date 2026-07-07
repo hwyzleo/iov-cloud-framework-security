@@ -6,6 +6,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.KeyRevokedException;
+import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CachedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 import org.springframework.stereotype.Component;
@@ -39,14 +40,14 @@ public class KeyCache {
     }
 
     /**
-     * 获取数据密钥（按设备SN和业务域）
+     * 获取数据密钥（按设备SN和业务类型）
      *
-     * @param deviceSn  设备SN
-     * @param bizDomain 业务域
+     * @param deviceSn 设备SN
+     * @param bizType  业务类型
      * @return 缓存的数据密钥
      */
-    public CachedDataKey get(String deviceSn, String bizDomain) {
-        String cacheKey = buildCacheKey(deviceSn, bizDomain);
+    public CachedDataKey get(String deviceSn, BizType bizType) {
+        String cacheKey = buildCacheKey(deviceSn, bizType);
         CachedDataKey cached = cache.getIfPresent(cacheKey);
 
         if (cached != null && !cached.getExpireAt().isBefore(Instant.now())) {
@@ -55,14 +56,14 @@ public class KeyCache {
 
         // 缓存未命中或已过期，从KMS获取
         try {
-            WrappedKey wrapped = kmsClient.getActiveDataKey(deviceSn, bizDomain);
+            WrappedKey wrapped = kmsClient.getActiveDataKey(deviceSn, bizType);
             byte[] dekPlaintext = kmsClient.unwrap(wrapped);
 
             CachedDataKey dataKey = new CachedDataKey();
             dataKey.setKeyId(wrapped.getKeyId());
             dataKey.setKeyVersion(wrapped.getKeyVersion());
             dataKey.setDekPlaintext(dekPlaintext);
-            dataKey.setBizDomain(bizDomain);
+            dataKey.setBizType(bizType);
             dataKey.setDeviceSn(deviceSn);
             dataKey.setExpireAt(Instant.now().plus(properties.getKeyCache().getTtl()));
 
@@ -121,8 +122,8 @@ public class KeyCache {
         cache.asMap().entrySet().removeIf(entry -> entry.getValue().getKeyId().equals(keyId));
     }
 
-    private String buildCacheKey(String deviceSn, String bizDomain) {
-        return deviceSn + ":" + bizDomain;
+    private String buildCacheKey(String deviceSn, BizType bizType) {
+        return deviceSn + ":" + bizType.name();
     }
 
     private String buildCacheKey(String keyId, int keyVersion) {

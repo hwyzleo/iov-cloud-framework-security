@@ -1,5 +1,8 @@
 package net.hwyz.iov.cloud.framework.security.crypto.exception;
 
+/**
+ * 加解密异常基类
+ */
 public abstract class CryptoException extends RuntimeException {
 
     private final Reason reason;
@@ -8,7 +11,8 @@ public abstract class CryptoException extends RuntimeException {
         DEVICE_UNBOUND,
         DEPENDENCY_UNAVAILABLE,
         KEY_REVOKED,
-        INTEGRITY_VERIFICATION_FAILED
+        INTEGRITY_VERIFICATION_FAILED,
+        INVALID_BIZ_TYPE
     }
 
     public CryptoException(Reason reason, String message) {

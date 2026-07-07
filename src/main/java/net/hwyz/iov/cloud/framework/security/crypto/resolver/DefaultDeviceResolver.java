@@ -5,13 +5,13 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.DeviceUnboundException;
+import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BindingEntry;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -39,9 +39,9 @@ public class DefaultDeviceResolver implements DeviceResolver {
     }
 
     @Override
-    public String resolveDeviceSn(String vin, String bizDomain) {
-        // 获取器件类别
-        String deviceCategory = getDeviceCategory(bizDomain);
+    public String resolveDeviceSn(String vin, BizType bizType) {
+        // 从BizType获取器件类别
+        String deviceCategory = bizType.getDeviceCategory().name();
 
         // 查询缓存
         String cacheKey = buildCacheKey(vin, deviceCategory);
@@ -68,11 +68,6 @@ public class DefaultDeviceResolver implements DeviceResolver {
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to resolve device binding", e);
         }
-    }
-
-    private String getDeviceCategory(String bizDomain) {
-        Map<String, String> routing = properties.getDeviceRouting();
-        return routing.getOrDefault(bizDomain, routing.getOrDefault("default", "TBOX"));
     }
 
     private BindingEntry queryBinding(String vin, String deviceCategory) {
