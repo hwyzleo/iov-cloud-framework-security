@@ -15,7 +15,27 @@ public enum BizType {
     /**
      * 车云通信根
      */
-    V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE));
+    V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE)),
+    /**
+     * TBOX设备根
+     */
+    TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE)),
+    /**
+     * 中央网关设备根
+     */
+    CGW_DEVICE_ROOT(DeviceCategory.CGW, false, new Prov("cgw-dev-root", Anchor.DEVICE)),
+    /**
+     * 自动驾驶域控设备根
+     */
+    AD_DCU_DEVICE_ROOT(DeviceCategory.AD_DCU, false, new Prov("ad-dcu-dev-root", Anchor.DEVICE)),
+    /**
+     * 座舱域控设备根
+     */
+    CPT_DCU_DEVICE_ROOT(DeviceCategory.CPT_DCU, false, new Prov("cpt-dcu-dev-root", Anchor.DEVICE)),
+    /**
+     * 智能钥匙设备根
+     */
+    PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE));
 
     private final DeviceCategory deviceCategory;
     private final boolean supportsData;
@@ -78,7 +98,11 @@ public enum BizType {
      * 器件类别
      */
     public enum DeviceCategory {
-        TBOX
+        TBOX,
+        CGW,
+        AD_DCU,
+        CPT_DCU,
+        PEPS
     }
 
     /**
