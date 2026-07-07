@@ -13,24 +13,9 @@ package net.hwyz.iov.cloud.framework.security.crypto.model;
 public enum BizType {
 
     /**
-     * 远程控制（仅数据加密）
+     * 车云通信根
      */
-    REMOTE_CONTROL(DeviceCategory.TBOX, true, null),
-
-    /**
-     * SecOC 组密钥（仅派生，车级锚定——绑 VIN，换 TBOX 不变）
-     */
-    SECOC_GROUP(DeviceCategory.TBOX, false, new Prov("secoc-master", Anchor.VEHICLE)),
-
-    /**
-     * 设备根密钥（仅派生，设备级锚定——绑芯片 UID）
-     */
-    DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("dev-root-master", Anchor.DEVICE)),
-
-    /**
-     * 遥测（数据加密 + 派生，设备级锚定——两用）
-     */
-    TELEMETRY(DeviceCategory.TBOX, true, new Prov("telemetry-root", Anchor.DEVICE));
+    V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE));
 
     private final DeviceCategory deviceCategory;
     private final boolean supportsData;
