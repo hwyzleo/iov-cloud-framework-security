@@ -24,7 +24,15 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.ProvisioningResult;
  *   <li>{@code anchor=DEVICE}（设备级）→ {@code deriveByVin} 先 VIN→device_sn 解析再 HMAC，
  *       {@code deriveByUid} 直接 {@code HMAC(keyName, uid)}，两路指向同一芯片、同一秘密。</li>
  * </ul>
- * <strong>封装/解封</strong>收方恒为器件：{@code *ByVin} 先解析设备、{@code *ByUid} 直指 {@code dev-{uid}}。
+ * <p>
+ * <strong>封装/解封（by-reference，CR-004）</strong>：封装方法不传明文 material——KMS 内部按
+ * {@code bizType.prov.keyName} 派生密钥后 {@code encryptWith("dev-{sn|uid}", 派生密钥)}（内建
+ * derive-and-wrap，明文不出 KMS）。封装收方恒为器件：{@code *ByVin} 先解析设备、{@code *ByUid}
+ * 直指 {@code dev-{uid}}。{@code wrapByUid} 仅接受 {@code anchor=DEVICE}（VEHICLE 派生需 VIN，
+ * 无 VIN 时 fail-closed）。
+ * <p>
+ * <strong>跨设备封装 {@code wrapFor}</strong>：仅 VEHICLE 锚定且收方≠VIN 默认器件时用
+ * （如防盗组密钥→安全灌注机 KLD）；DEVICE 锚定自交付用 {@code wrapByUid}/{@code wrapByVin} 即可。
  * <p>
  * {@code bizType} 必传且须 {@code prov != null}（声明支持 PROVISION，携带 keyName + anchor），
  * 否则 fail-closed。派生公式与 KCV 由框架拥有，业务方不自算。
@@ -57,29 +65,48 @@ public interface KeyProvisioningTemplate {
     ProvisioningResult deriveByUid(String uid, BizType bizType);
 
     /**
-     * 封装密钥物料下发（按 VIN 寻址 device_sn）
+     * 封装下发（按 VIN 寻址 device_sn，by-reference）
      * <p>
-     * 先 VIN→device_sn 解析，再 {@code encryptWith("dev-{sn}", material)}。
-     * 封装收方恒为器件，与 anchor 无关。
+     * KMS 内部按 {@code bizType.prov.keyName} 派生密钥后 {@code encryptWith("dev-{sn}", 派生密钥)}，
+     * 明文不出 KMS。派生取值按 anchor 决定（VEHICLE→HMAC(keyName, VIN)；DEVICE→HMAC(keyName, device_sn)），
+     * 封装收方恒为器件（解析 device_sn 后以 {@code dev-{sn}} 封装）。
      *
-     * @param vin      VIN
-     * @param bizType  业务类型（prov 必须非空）
-     * @param material 待封装物料
+     * @param vin     VIN
+     * @param bizType 业务类型（prov 必须非空）
      * @return 封装结果（含密文）
      */
-    ProvisioningResult wrapByVin(String vin, BizType bizType, byte[] material);
+    ProvisioningResult wrapByVin(String vin, BizType bizType);
 
     /**
-     * 封装密钥物料下发（uid 即 device_sn）
+     * 封装下发（uid 即 device_sn，by-reference）
      * <p>
-     * 直接 {@code encryptWith("dev-{uid}", material)}，用于 VIN 未绑定/预置阶段。
+     * KMS 内部 {@code hmac(keyName, uid)} 派生 → {@code encryptWith("dev-{uid}", 派生密钥)}，
+     * 用于 VIN 未绑定/预置阶段。仅接受 {@code anchor=DEVICE}；VEHICLE 派生需 VIN，传 VEHICLE 项 fail-closed。
      *
-     * @param uid      器件唯一标识（即 device_sn）
-     * @param bizType  业务类型（prov 必须非空）
-     * @param material 待封装物料
+     * @param uid     器件唯一标识（即 device_sn）
+     * @param bizType 业务类型（prov 必须非空，且 anchor=DEVICE）
      * @return 封装结果（含密文）
      */
-    ProvisioningResult wrapByUid(String uid, BizType bizType, byte[] material);
+    ProvisioningResult wrapByUid(String uid, BizType bizType);
+
+    /**
+     * 跨设备封装下发（by-reference，CR-004）
+     * <p>
+     * ① {@code keyBizType + vinOrUid} 决定<strong>派生哪把密钥</strong>；
+     * ② {@code recipientUid} 决定<strong>封装给谁</strong>（{@code dev-{recipientUid}}）。
+     * <p>
+     * 适用边界：仅 VEHICLE 锚定且收方≠VIN 默认器件时用（如防盗组密钥→安全灌注机 KLD）；
+     * DEVICE 锚定自交付用 {@link #wrapByUid}/{@link #wrapByVin} 即可。
+     * <p>
+     * 派生取值：VEHICLE→{@code hmac(keyName, vinOrUid)}（vinOrUid 即 VIN）；
+     * DEVICE→{@code hmac(keyName, vinOrUid)}（vinOrUid 即 uid）。
+     *
+     * @param keyBizType  决定派生哪把密钥的业务类型（prov 必须非空）
+     * @param vinOrUid    VIN（VEHICLE 锚定）或 uid（DEVICE 锚定）
+     * @param recipientUid 收方器件 uid
+     * @return 封装结果（含密文）
+     */
+    ProvisioningResult wrapFor(BizType keyBizType, String vinOrUid, String recipientUid);
 
     /**
      * 解封密钥物料（按 VIN 寻址 device_sn）

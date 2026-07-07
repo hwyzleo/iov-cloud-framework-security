@@ -29,8 +29,11 @@ import java.util.Objects;
  *       {@code hmac(keyName, device_sn)}，{@code deriveByUid} 直接 {@code hmac(keyName, uid)}
  *       （两路指向同一芯片、同一秘密）；{@code deriveByUid} 仅接受 {@code anchor=DEVICE}。</li>
  * </ul>
- * <strong>封装/解封</strong>收方恒为器件：{@code *ByVin} 先解析设备、{@code *ByUid} 直指
- * {@code dev-{uid}}，与 anchor 无关。
+ * <strong>封装/解封（by-reference，CR-004）</strong>：封装方法不传明文 material——内部串接
+ * {@code hmac}（派生）+ {@code encryptWith}（封装），明文不出 KMS。封装收方恒为器件：
+ * {@code *ByVin} 先解析设备、{@code *ByUid} 直指 {@code dev-{uid}}，与 anchor 无关。
+ * {@code wrapByUid} 仅接受 {@code anchor=DEVICE}（VEHICLE 派生需 VIN）。
+ * {@code wrapFor} 为跨设备封装：派生 {@code keyBizType@vinOrUid} 后以 {@code dev-{recipientUid}} 封装。
  * <p>
  * 派生公式与 KCV 由框架拥有，任一 KMS 调用不可用即 fail-closed 抛 {@link CryptoException}。
  */
@@ -39,7 +42,7 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
     private static final Logger log = LoggerFactory.getLogger(DefaultKeyProvisioningTemplate.class);
 
     private static final String DERIVE_ALGORITHM = "HMAC-SHA256";
-    private static final String WRAP_ALGORITHM = "AES-256-GCM";
+    private static final String WRAP_ALGORITHM = "HMAC-SHA256+AES-256-GCM";
     private static final String KEY_SPEC = "256-bit";
     private static final int KCV_LENGTH = 4;
     private static final String DEV_KEY_PREFIX = "dev-";
@@ -105,40 +108,99 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         }
     }
 
-    // ==================== 封装 ====================
+    // ==================== 封装（by-reference，CR-004） ====================
 
     @Override
-    public ProvisioningResult wrapByVin(String vin, BizType bizType, byte[] material) {
+    public ProvisioningResult wrapByVin(String vin, BizType bizType) {
         validateProvisionCapability(bizType);
         Objects.requireNonNull(vin, "vin must not be null");
-        Objects.requireNonNull(material, "material must not be null");
         String normalizedVin = normalizeVin(vin);
+        BizType.Prov prov = bizType.prov();
         String deviceSn = resolveDeviceSn(normalizedVin, bizType);
-        return doWrap(deviceSn, bizType, material, "vin=" + normalizedVin);
+        byte[] identity = (prov.anchor() == BizType.Anchor.VEHICLE)
+                ? normalizedVin.getBytes(StandardCharsets.UTF_8)
+                : deviceSn.getBytes(StandardCharsets.UTF_8);
+        String deriveCtx = (prov.anchor() == BizType.Anchor.VEHICLE)
+                ? "vin=" + normalizedVin
+                : "vin=" + normalizedVin + " (sn=" + deviceSn + ")";
+        return doWrap(deviceSn, prov.keyName(), identity, bizType, deriveCtx);
     }
 
     @Override
-    public ProvisioningResult wrapByUid(String uid, BizType bizType, byte[] material) {
+    public ProvisioningResult wrapByUid(String uid, BizType bizType) {
         validateProvisionCapability(bizType);
         Objects.requireNonNull(uid, "uid must not be null");
-        Objects.requireNonNull(material, "material must not be null");
+        BizType.Prov prov = bizType.prov();
+        if (prov.anchor() == BizType.Anchor.VEHICLE) {
+            throw new CryptoException(CryptoException.Reason.INVALID_BIZ_TYPE,
+                    "wrapByUid only accepts anchor=DEVICE for by-reference wrap, got VEHICLE for bizType=" + bizType.name()) {};
+        }
         String normalizedUid = normalizeUid(uid);
-        return doWrap(normalizedUid, bizType, material, "uid=" + normalizedUid);
+        return doWrap(normalizedUid, prov.keyName(), normalizedUid.getBytes(StandardCharsets.UTF_8),
+                bizType, "uid=" + normalizedUid);
     }
 
-    private ProvisioningResult doWrap(String deviceSn, BizType bizType, byte[] material, String logCtx) {
+    @Override
+    public ProvisioningResult wrapFor(BizType keyBizType, String vinOrUid, String recipientUid) {
+        validateProvisionCapability(keyBizType);
+        Objects.requireNonNull(vinOrUid, "vinOrUid must not be null");
+        Objects.requireNonNull(recipientUid, "recipientUid must not be null");
+        BizType.Prov prov = keyBizType.prov();
+        byte[] identity;
+        String deriveCtx;
+        if (prov.anchor() == BizType.Anchor.VEHICLE) {
+            String normalizedVin = normalizeVin(vinOrUid);
+            identity = normalizedVin.getBytes(StandardCharsets.UTF_8);
+            deriveCtx = "vin=" + normalizedVin;
+        } else {
+            String normalizedUid = normalizeUid(vinOrUid);
+            identity = normalizedUid.getBytes(StandardCharsets.UTF_8);
+            deriveCtx = "uid=" + normalizedUid;
+        }
+        String normalizedRecipient = normalizeUid(recipientUid);
+        return doWrapFor(normalizedRecipient, prov.keyName(), identity, keyBizType, deriveCtx);
+    }
+
+    /**
+     * by-reference 封装：内部 hmac 派生 → encryptWith 封装，明文不出 KMS
+     */
+    private ProvisioningResult doWrap(String deviceSn, String keyName, byte[] identity,
+                                      BizType bizType, String deriveCtx) {
         String wrapKeyName = DEV_KEY_PREFIX + deviceSn;
         long startTime = System.currentTimeMillis();
         try {
-            byte[] wrapped = kmsClient.encryptWith(wrapKeyName, material);
+            byte[] derived = kmsClient.hmac(keyName, identity);
+            byte[] wrapped = kmsClient.encryptWith(wrapKeyName, derived);
             long duration = System.currentTimeMillis() - startTime;
-            log.info("封装成功: bizType={}, wrapKey={}, {} (sn={}), duration={}ms",
-                    bizType.name(), wrapKeyName, logCtx, deviceSn, duration);
+            log.info("封装成功(by-ref): bizType={}, keyName={}, wrapKey={}, {} (sn={}), duration={}ms",
+                    bizType.name(), keyName, wrapKeyName, deriveCtx, deviceSn, duration);
             cryptoMetrics.recordProvisioningWrap(duration);
-            return buildWrapResult(wrapKeyName, material, wrapped);
+            return buildWrapResult(wrapKeyName, derived, wrapped);
         } catch (Exception e) {
             cryptoMetrics.recordError();
-            log.error("封装失败: bizType={}, wrapKey={}, {}", bizType.name(), wrapKeyName, logCtx, e);
+            log.error("封装失败(by-ref): bizType={}, keyName={}, wrapKey={}, {}", bizType.name(), keyName, wrapKeyName, deriveCtx, e);
+            throw e;
+        }
+    }
+
+    /**
+     * 跨设备封装（wrapFor）：派生 keyBizType@vinOrUid → encryptWith("dev-{recipientUid}", 派生密钥)
+     */
+    private ProvisioningResult doWrapFor(String recipientUid, String keyName, byte[] identity,
+                                         BizType keyBizType, String deriveCtx) {
+        String wrapKeyName = DEV_KEY_PREFIX + recipientUid;
+        long startTime = System.currentTimeMillis();
+        try {
+            byte[] derived = kmsClient.hmac(keyName, identity);
+            byte[] wrapped = kmsClient.encryptWith(wrapKeyName, derived);
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("跨设备封装成功: keyBizType={}, keyName={}, wrapKey={}, {} (recipient={}), duration={}ms",
+                    keyBizType.name(), keyName, wrapKeyName, deriveCtx, recipientUid, duration);
+            cryptoMetrics.recordProvisioningWrap(duration);
+            return buildWrapResult(wrapKeyName, derived, wrapped);
+        } catch (Exception e) {
+            cryptoMetrics.recordError();
+            log.error("跨设备封装失败: keyBizType={}, keyName={}, wrapKey={}, {}", keyBizType.name(), keyName, wrapKeyName, deriveCtx, e);
             throw e;
         }
     }
@@ -212,15 +274,15 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
     }
 
     /**
-     * 构建封装结果（含密文，KCV 由原始物料计算）
+     * 构建封装结果（by-reference：含密文，KCV 由派生密钥计算）
      */
-    private ProvisioningResult buildWrapResult(String wrapKeyName, byte[] material, byte[] wrapped) {
+    private ProvisioningResult buildWrapResult(String wrapKeyName, byte[] derived, byte[] wrapped) {
         ProvisioningResult result = new ProvisioningResult();
         result.setKmsKeyRef(wrapKeyName);
         result.setKeySpec(KEY_SPEC);
         result.setProvider(provider);
         result.setAlgorithm(WRAP_ALGORITHM);
-        result.setKcv(computeKcv(material));
+        result.setKcv(computeKcv(derived));
         result.setWrappedMaterial(wrapped);
         return result;
     }

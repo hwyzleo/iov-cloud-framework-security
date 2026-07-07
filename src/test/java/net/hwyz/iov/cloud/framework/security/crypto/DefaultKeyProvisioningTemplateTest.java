@@ -96,55 +96,176 @@ class DefaultKeyProvisioningTemplateTest {
         verify(kmsClient, never()).hmac(any(), any());
     }
 
-    // ==================== wrapByVin（收方恒为器件，始终解析设备） ====================
+    // ==================== wrapByVin（by-reference，收方恒为器件，始终解析设备） ====================
 
     @Test
-    void wrapByVin_success() {
-        byte[] material = {10, 20, 30, 40}, wrapped = {99, 88, 77};
+    void wrapByVin_vehicleAnchor_success() {
+        byte[] derived = {1, 2, 3, 4, 5, 6, 7, 8}, wrapped = {99, 88, 77};
         when(deviceResolver.resolveDeviceSn("VIN12345", BizType.V2C_COMM_ROOT)).thenReturn("SN12345");
-        when(kmsClient.encryptWith("dev-SN12345", material)).thenReturn(wrapped);
+        when(kmsClient.hmac("v2c-comm-root", bytes("VIN12345"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN12345", derived)).thenReturn(wrapped);
 
-        ProvisioningResult result = template.wrapByVin("VIN12345", BizType.V2C_COMM_ROOT, material);
+        ProvisioningResult result = template.wrapByVin("VIN12345", BizType.V2C_COMM_ROOT);
 
         assertEquals("dev-SN12345", result.getKmsKeyRef());
-        assertEquals("AES-256-GCM", result.getAlgorithm());
-        assertArrayEquals(Arrays.copyOf(material, 4), result.getKcv());
+        assertEquals("HMAC-SHA256+AES-256-GCM", result.getAlgorithm());
+        assertArrayEquals(Arrays.copyOf(derived, 4), result.getKcv());
         assertArrayEquals(wrapped, result.getWrappedMaterial());
         verify(deviceResolver).resolveDeviceSn("VIN12345", BizType.V2C_COMM_ROOT);
         verify(cryptoMetrics).recordProvisioningWrap(anyLong());
     }
 
     @Test
-    void wrapByVin_kmsFailure_failClosed() {
+    void wrapByVin_deviceAnchor_success() {
+        byte[] derived = {10, 20, 30, 40}, wrapped = {55, 66};
+        when(deviceResolver.resolveDeviceSn("VIN123", BizType.TBOX_DEVICE_ROOT)).thenReturn("SN123");
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenReturn(wrapped);
+
+        ProvisioningResult result = template.wrapByVin("VIN123", BizType.TBOX_DEVICE_ROOT);
+
+        assertEquals("dev-SN123", result.getKmsKeyRef());
+        assertArrayEquals(Arrays.copyOf(derived, 4), result.getKcv());
+        assertArrayEquals(wrapped, result.getWrappedMaterial());
+    }
+
+    @Test
+    void wrapByVin_hmacFailure_failClosed() {
         when(deviceResolver.resolveDeviceSn("VIN123", BizType.V2C_COMM_ROOT)).thenReturn("SN123");
-        when(kmsClient.encryptWith("dev-SN123", new byte[]{1})).thenThrow(new CryptoDependencyUnavailableException("down"));
+        when(kmsClient.hmac("v2c-comm-root", bytes("VIN123"))).thenThrow(new CryptoDependencyUnavailableException("down"));
 
         assertThrows(CryptoDependencyUnavailableException.class,
-                () -> template.wrapByVin("VIN123", BizType.V2C_COMM_ROOT, new byte[]{1}));
+                () -> template.wrapByVin("VIN123", BizType.V2C_COMM_ROOT));
         verify(cryptoMetrics).recordError();
     }
 
-    // ==================== wrapByUid ====================
+    @Test
+    void wrapByVin_encryptFailure_failClosed() {
+        byte[] derived = {1, 2, 3, 4};
+        when(deviceResolver.resolveDeviceSn("VIN123", BizType.V2C_COMM_ROOT)).thenReturn("SN123");
+        when(kmsClient.hmac("v2c-comm-root", bytes("VIN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenThrow(new CryptoDependencyUnavailableException("down"));
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> template.wrapByVin("VIN123", BizType.V2C_COMM_ROOT));
+        verify(cryptoMetrics).recordError();
+    }
+
+    // ==================== wrapByUid（by-reference，仅 anchor=DEVICE） ====================
 
     @Test
-    void wrapByUid_success() {
-        byte[] material = {10, 20, 30}, wrapped = {99, 88};
-        when(kmsClient.encryptWith("dev-SN12345", material)).thenReturn(wrapped);
+    void wrapByUid_deviceAnchor_success() {
+        byte[] derived = {10, 20, 30, 40}, wrapped = {99, 88};
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN12345"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN12345", derived)).thenReturn(wrapped);
 
-        ProvisioningResult result = template.wrapByUid("SN12345", BizType.V2C_COMM_ROOT, material);
+        ProvisioningResult result = template.wrapByUid("SN12345", BizType.TBOX_DEVICE_ROOT);
 
         assertEquals("dev-SN12345", result.getKmsKeyRef());
-        assertEquals("AES-256-GCM", result.getAlgorithm());
+        assertEquals("HMAC-SHA256+AES-256-GCM", result.getAlgorithm());
+        assertArrayEquals(Arrays.copyOf(derived, 4), result.getKcv());
         assertArrayEquals(wrapped, result.getWrappedMaterial());
         verify(deviceResolver, never()).resolveDeviceSn(any(), any());
     }
 
     @Test
-    void wrapByUid_kmsFailure_failClosed() {
-        when(kmsClient.encryptWith("dev-SN123", new byte[]{1})).thenThrow(new CryptoDependencyUnavailableException("down"));
+    void wrapByUid_vehicleAnchor_throws() {
+        assertEquals(CryptoException.Reason.INVALID_BIZ_TYPE,
+                assertThrows(CryptoException.class,
+                        () -> template.wrapByUid("SN123", BizType.V2C_COMM_ROOT)).getReason());
+        verify(kmsClient, never()).hmac(any(), any());
+        verify(kmsClient, never()).encryptWith(any(), any());
+    }
+
+    @Test
+    void wrapByUid_hmacFailure_failClosed() {
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenThrow(new CryptoDependencyUnavailableException("down"));
         assertThrows(CryptoDependencyUnavailableException.class,
-                () -> template.wrapByUid("SN123", BizType.V2C_COMM_ROOT, new byte[]{1}));
+                () -> template.wrapByUid("SN123", BizType.TBOX_DEVICE_ROOT));
         verify(cryptoMetrics).recordError();
+    }
+
+    @Test
+    void wrapByUid_encryptFailure_failClosed() {
+        byte[] derived = {1, 2, 3};
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenThrow(new CryptoDependencyUnavailableException("down"));
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> template.wrapByUid("SN123", BizType.TBOX_DEVICE_ROOT));
+        verify(cryptoMetrics).recordError();
+    }
+
+    // ==================== wrapFor（跨设备封装，CR-004） ====================
+
+    @Test
+    void wrapFor_vehicleAnchor_success() {
+        byte[] derived = {1, 2, 3, 4, 5, 6}, wrapped = {77, 88, 99};
+        when(kmsClient.hmac("immo-group", bytes("VIN12345"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-KLD001", derived)).thenReturn(wrapped);
+
+        ProvisioningResult result = template.wrapFor(BizType.IMMO_GROUP_KEY, "VIN12345", "KLD001");
+
+        assertEquals("dev-KLD001", result.getKmsKeyRef());
+        assertEquals("HMAC-SHA256+AES-256-GCM", result.getAlgorithm());
+        assertArrayEquals(Arrays.copyOf(derived, 4), result.getKcv());
+        assertArrayEquals(wrapped, result.getWrappedMaterial());
+        verify(deviceResolver, never()).resolveDeviceSn(any(), any());
+        verify(cryptoMetrics).recordProvisioningWrap(anyLong());
+    }
+
+    @Test
+    void wrapFor_deviceAnchor_success() {
+        byte[] derived = {10, 20, 30, 40}, wrapped = {44, 55};
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-KLD001", derived)).thenReturn(wrapped);
+
+        ProvisioningResult result = template.wrapFor(BizType.TBOX_DEVICE_ROOT, "SN123", "KLD001");
+
+        assertEquals("dev-KLD001", result.getKmsKeyRef());
+        assertArrayEquals(Arrays.copyOf(derived, 4), result.getKcv());
+        assertArrayEquals(wrapped, result.getWrappedMaterial());
+    }
+
+    @Test
+    void wrapFor_hmacFailure_failClosed() {
+        when(kmsClient.hmac("immo-group", bytes("VIN123"))).thenThrow(new CryptoDependencyUnavailableException("down"));
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> template.wrapFor(BizType.IMMO_GROUP_KEY, "VIN123", "KLD001"));
+        verify(cryptoMetrics).recordError();
+    }
+
+    @Test
+    void wrapFor_encryptFailure_failClosed() {
+        byte[] derived = {1, 2, 3};
+        when(kmsClient.hmac("immo-group", bytes("VIN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-KLD001", derived)).thenThrow(new CryptoDependencyUnavailableException("down"));
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> template.wrapFor(BizType.IMMO_GROUP_KEY, "VIN123", "KLD001"));
+        verify(cryptoMetrics).recordError();
+    }
+
+    @Test
+    void wrapFor_nullVinOrUid_throwsNpe() {
+        assertThrows(NullPointerException.class,
+                () -> template.wrapFor(BizType.IMMO_GROUP_KEY, null, "KLD001"));
+    }
+
+    @Test
+    void wrapFor_nullRecipientUid_throwsNpe() {
+        assertThrows(NullPointerException.class,
+                () -> template.wrapFor(BizType.IMMO_GROUP_KEY, "VIN123", null));
+    }
+
+    @Test
+    void wrapFor_idempotent_withWhitespace() {
+        byte[] derived = {1, 2, 3}, wrapped = {99};
+        when(kmsClient.hmac("immo-group", bytes("VIN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-KLD001", derived)).thenReturn(wrapped);
+
+        ProvisioningResult padded = template.wrapFor(BizType.IMMO_GROUP_KEY, " VIN123 ", " KLD001 ");
+        ProvisioningResult clean = template.wrapFor(BizType.IMMO_GROUP_KEY, "VIN123", "KLD001");
+
+        assertEquals(padded.getKmsKeyRef(), clean.getKmsKeyRef());
     }
 
     // ==================== unwrapByVin ====================
@@ -188,22 +309,22 @@ class DefaultKeyProvisioningTemplateTest {
         verify(cryptoMetrics).recordError();
     }
 
-    // ==================== 封装/解封等价性 ====================
+    // ==================== 封装/解封等价性（by-reference） ====================
 
     @Test
-    void wrapAndUnwrap_byVinAndByUid_sameDeviceSn_useSameDevKey() {
-        byte[] material = {10, 20, 30}, wrapped = {99, 88};
-        when(deviceResolver.resolveDeviceSn("VIN123", BizType.V2C_COMM_ROOT)).thenReturn("SN123");
-        when(kmsClient.encryptWith("dev-SN123", material)).thenReturn(wrapped);
-        when(kmsClient.decryptWith("dev-SN123", wrapped)).thenReturn(material);
+    void wrapAndUnwrap_byVinAndByUid_deviceAnchor_sameDeviceSn_useSameDevKey() {
+        byte[] derived = {10, 20, 30}, wrapped = {99, 88};
+        when(deviceResolver.resolveDeviceSn("VIN123", BizType.TBOX_DEVICE_ROOT)).thenReturn("SN123");
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenReturn(wrapped);
+        when(kmsClient.decryptWith("dev-SN123", wrapped)).thenReturn(derived);
 
-        ProvisioningResult wrapByVin = template.wrapByVin("VIN123", BizType.V2C_COMM_ROOT, material);
-        ProvisioningResult wrapByUid = template.wrapByUid("SN123", BizType.V2C_COMM_ROOT, material);
+        ProvisioningResult wrapByVin = template.wrapByVin("VIN123", BizType.TBOX_DEVICE_ROOT);
+        ProvisioningResult wrapByUid = template.wrapByUid("SN123", BizType.TBOX_DEVICE_ROOT);
 
         assertEquals(wrapByVin.getKmsKeyRef(), wrapByUid.getKmsKeyRef());
-
-        assertArrayEquals(material, template.unwrapByVin("VIN123", BizType.V2C_COMM_ROOT, wrapped));
-        assertArrayEquals(material, template.unwrapByUid("SN123", BizType.V2C_COMM_ROOT, wrapped));
+        assertArrayEquals(derived, template.unwrapByVin("VIN123", BizType.TBOX_DEVICE_ROOT, wrapped));
+        assertArrayEquals(derived, template.unwrapByUid("SN123", BizType.TBOX_DEVICE_ROOT, wrapped));
     }
 
     // ==================== 规范化 / 幂等性 ====================
@@ -222,11 +343,12 @@ class DefaultKeyProvisioningTemplateTest {
 
     @Test
     void wrapByUid_idempotent_withWhitespace() {
-        byte[] material = {1}, wrapped = {99};
-        when(kmsClient.encryptWith("dev-SN123", material)).thenReturn(wrapped);
+        byte[] derived = {1}, wrapped = {99};
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenReturn(wrapped);
 
-        ProvisioningResult padded = template.wrapByUid(" SN123 ", BizType.V2C_COMM_ROOT, material);
-        ProvisioningResult clean = template.wrapByUid("SN123", BizType.V2C_COMM_ROOT, material);
+        ProvisioningResult padded = template.wrapByUid(" SN123 ", BizType.TBOX_DEVICE_ROOT);
+        ProvisioningResult clean = template.wrapByUid("SN123", BizType.TBOX_DEVICE_ROOT);
 
         assertEquals(padded.getKmsKeyRef(), clean.getKmsKeyRef());
     }
@@ -234,7 +356,7 @@ class DefaultKeyProvisioningTemplateTest {
     // ==================== *ByVin 无 DeviceResolver 时 ====================
 
     @Test
-    void byVinMethods_vehicleAnchor_deriveWorks_wrapUnwrapThrow() {
+    void byVinMethods_vehicleAnchor_deriveWorks_wrapThrows() {
         DefaultKeyProvisioningTemplate t = new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties, null);
         when(kmsClient.hmac("v2c-comm-root", bytes("VIN123"))).thenReturn(new byte[]{1, 2, 3, 4});
 
@@ -243,7 +365,7 @@ class DefaultKeyProvisioningTemplateTest {
 
         // wrap/unwrap 收方恒为器件，*ByVin 始终需要 DeviceResolver
         assertThrows(CryptoDependencyUnavailableException.class,
-                () -> t.wrapByVin("VIN123", BizType.V2C_COMM_ROOT, new byte[]{1}));
+                () -> t.wrapByVin("VIN123", BizType.V2C_COMM_ROOT));
         assertThrows(CryptoDependencyUnavailableException.class,
                 () -> t.unwrapByVin("VIN123", BizType.V2C_COMM_ROOT, new byte[]{1}));
     }
@@ -253,10 +375,12 @@ class DefaultKeyProvisioningTemplateTest {
     @Test
     void byUidMethods_resolverNull_wrapUnwrapWork() {
         DefaultKeyProvisioningTemplate t = new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties, null);
-        when(kmsClient.encryptWith("dev-SN123", new byte[]{1})).thenReturn(new byte[]{99});
-        when(kmsClient.decryptWith("dev-SN123", new byte[]{99})).thenReturn(new byte[]{1});
+        byte[] derived = {1, 2, 3}, wrapped = {99};
+        when(kmsClient.hmac("tbox-dev-root", bytes("SN123"))).thenReturn(derived);
+        when(kmsClient.encryptWith("dev-SN123", derived)).thenReturn(wrapped);
+        when(kmsClient.decryptWith("dev-SN123", wrapped)).thenReturn(derived);
 
-        assertNotNull(t.wrapByUid("SN123", BizType.V2C_COMM_ROOT, new byte[]{1}));
-        assertArrayEquals(new byte[]{1}, t.unwrapByUid("SN123", BizType.V2C_COMM_ROOT, new byte[]{99}));
+        assertNotNull(t.wrapByUid("SN123", BizType.TBOX_DEVICE_ROOT));
+        assertArrayEquals(derived, t.unwrapByUid("SN123", BizType.TBOX_DEVICE_ROOT, wrapped));
     }
 }
