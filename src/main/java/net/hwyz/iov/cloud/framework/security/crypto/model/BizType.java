@@ -17,6 +17,10 @@ public enum BizType {
      */
     V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE)),
     /**
+     * 防盗组密钥
+     */
+    IMMO_GROUP_KEY(DeviceCategory.BCM, false, new Prov("immo-group", Anchor.VEHICLE)),
+    /**
      * TBOX设备根
      */
     TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE)),
@@ -35,7 +39,11 @@ public enum BizType {
     /**
      * 智能钥匙设备根
      */
-    PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE));
+    PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE)),
+    /**
+     * 安全灌注机设备根（产线工装；防盗根等封装下发的收方；仅 uid 路径）
+     */
+    KLD_DEVICE_ROOT(DeviceCategory.KLD, false, new Prov("kld-dev-root", Anchor.DEVICE));
 
     private final DeviceCategory deviceCategory;
     private final boolean supportsData;
@@ -102,7 +110,9 @@ public enum BizType {
         CGW,
         AD_DCU,
         CPT_DCU,
-        PEPS
+        PEPS,
+        BCM,
+        KLD
     }
 
     /**
