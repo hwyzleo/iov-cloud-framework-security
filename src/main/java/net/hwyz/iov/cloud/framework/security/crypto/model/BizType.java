@@ -15,44 +15,46 @@ public enum BizType {
     /**
      * 车云通信根
      */
-    V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE)),
+    V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE), CryptoMode.SESSION),
     /**
      * 防盗组密钥
      */
-    IMMO_GROUP_KEY(DeviceCategory.BCM, false, new Prov("immo-group", Anchor.VEHICLE)),
+    IMMO_GROUP_KEY(DeviceCategory.BCM, false, new Prov("immo-group", Anchor.VEHICLE), CryptoMode.ENVELOPE),
     /**
      * TBOX设备根
      */
-    TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE)),
+    TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE),
     /**
      * 中央网关设备根
      */
-    CGW_DEVICE_ROOT(DeviceCategory.CGW, false, new Prov("cgw-dev-root", Anchor.DEVICE)),
+    CGW_DEVICE_ROOT(DeviceCategory.CGW, false, new Prov("cgw-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE),
     /**
      * 自动驾驶域控设备根
      */
-    AD_DCU_DEVICE_ROOT(DeviceCategory.AD_DCU, false, new Prov("ad-dcu-dev-root", Anchor.DEVICE)),
+    AD_DCU_DEVICE_ROOT(DeviceCategory.AD_DCU, false, new Prov("ad-dcu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE),
     /**
      * 座舱域控设备根
      */
-    CPT_DCU_DEVICE_ROOT(DeviceCategory.CPT_DCU, false, new Prov("cpt-dcu-dev-root", Anchor.DEVICE)),
+    CPT_DCU_DEVICE_ROOT(DeviceCategory.CPT_DCU, false, new Prov("cpt-dcu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE),
     /**
      * 智能钥匙设备根
      */
-    PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE)),
+    PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE),
     /**
      * 安全灌注机设备根（产线工装；防盗根等封装下发的收方；仅 uid 路径）
      */
-    KLD_DEVICE_ROOT(DeviceCategory.KLD, false, new Prov("kld-dev-root", Anchor.DEVICE));
+    KLD_DEVICE_ROOT(DeviceCategory.KLD, false, new Prov("kld-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE);
 
     private final DeviceCategory deviceCategory;
     private final boolean supportsData;
     private final Prov prov;
+    private final CryptoMode cryptoMode;
 
-    BizType(DeviceCategory deviceCategory, boolean supportsData, Prov prov) {
+    BizType(DeviceCategory deviceCategory, boolean supportsData, Prov prov, CryptoMode cryptoMode) {
         this.deviceCategory = deviceCategory;
         this.supportsData = supportsData;
         this.prov = prov;
+        this.cryptoMode = cryptoMode;
     }
 
     public DeviceCategory getDeviceCategory() {
@@ -84,6 +86,15 @@ public enum BizType {
      */
     public Prov prov() {
         return prov;
+    }
+
+    /**
+     * 加解密模型分派（ENVELOPE 信封 DEK / SESSION 会话根 KDF）
+     *
+     * @return CryptoMode
+     */
+    public CryptoMode cryptoMode() {
+        return cryptoMode;
     }
 
     /**
@@ -126,9 +137,17 @@ public enum BizType {
     /**
      * 派生/封装能力声明
      *
-     * @param keyName KMS 命名密钥名（不同业务不同 keyName → 不同秘密）
+     * @param keyName KMS 命名密钥名（不同业务不同 keyName -> 不同秘密）
      * @param anchor  锚定层级（VEHICLE / DEVICE）
      */
     public record Prov(String keyName, Anchor anchor) {
+    }
+
+    /**
+     * 加解密模型：ENVELOPE=信封 DEK（KMS 取钥）；SESSION=会话根 KDF（本地派生会话密钥、不查 KMS）
+     */
+    public enum CryptoMode {
+        ENVELOPE,
+        SESSION
     }
 }

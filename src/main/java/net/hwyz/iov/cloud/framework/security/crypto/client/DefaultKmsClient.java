@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
 /**
@@ -37,6 +38,16 @@ public class DefaultKmsClient implements KmsClient {
 
     @Override
     public byte[] decryptWith(String keyName, byte[] ciphertext) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public byte[] deriveSessionRoot(String keyName, String vin) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 }

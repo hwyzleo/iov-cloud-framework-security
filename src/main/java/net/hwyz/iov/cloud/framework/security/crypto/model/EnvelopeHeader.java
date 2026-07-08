@@ -15,6 +15,8 @@ public class EnvelopeHeader implements Serializable {
     private int keyVersion;
     private String alg;
     private byte[] iv;
+    private int mode;
+    private byte[] salt;
 
     public EnvelopeHeader() {
     }
@@ -59,27 +61,52 @@ public class EnvelopeHeader implements Serializable {
         this.iv = iv;
     }
 
+    /**
+     * 加解密模式（0=ENVELOPE, 1=SESSION）
+     */
+    public int getMode() {
+        return mode;
+    }
+
+    public void setMode(int mode) {
+        this.mode = mode;
+    }
+
+    /**
+     * HKDF salt（仅 SESSION 模式使用）
+     */
+    public byte[] getSalt() {
+        return salt;
+    }
+
+    public void setSalt(byte[] salt) {
+        this.salt = salt;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         EnvelopeHeader that = (EnvelopeHeader) o;
-        return ver == that.ver && keyVersion == that.keyVersion
+        return ver == that.ver && keyVersion == that.keyVersion && mode == that.mode
                 && java.util.Objects.equals(keyId, that.keyId)
                 && java.util.Objects.equals(alg, that.alg)
-                && Arrays.equals(iv, that.iv);
+                && Arrays.equals(iv, that.iv)
+                && Arrays.equals(salt, that.salt);
     }
 
     @Override
     public int hashCode() {
-        int result = java.util.Objects.hash(ver, keyId, keyVersion, alg);
+        int result = java.util.Objects.hash(ver, keyId, keyVersion, alg, mode);
         result = 31 * result + Arrays.hashCode(iv);
+        result = 31 * result + Arrays.hashCode(salt);
         return result;
     }
 
     @Override
     public String toString() {
         return "EnvelopeHeader{ver=" + ver + ", keyId='" + keyId + "', keyVersion=" + keyVersion
-                + ", alg='" + alg + "', iv=" + Arrays.toString(iv) + "}";
+                + ", alg='" + alg + "', iv=" + Arrays.toString(iv)
+                + ", mode=" + mode + ", salt=" + Arrays.toString(salt) + "}";
     }
 }

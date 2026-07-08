@@ -20,12 +20,18 @@ public class CryptoMetrics {
     private final Counter provisioningDeriveCounter;
     private final Counter provisioningWrapCounter;
     private final Counter provisioningUnwrapCounter;
+    private final Counter keyprovIssueCounter;
+    private final Counter sessionEncryptCounter;
+    private final Counter sessionDecryptCounter;
     private final Timer encryptTimer;
     private final Timer decryptTimer;
     private final Timer kmsCallTimer;
     private final Timer provisioningDeriveTimer;
     private final Timer provisioningWrapTimer;
     private final Timer provisioningUnwrapTimer;
+    private final Timer keyprovIssueTimer;
+    private final Timer sessionEncryptTimer;
+    private final Timer sessionDecryptTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
         this.encryptCounter = Counter.builder("crypto.encrypt.count")
@@ -56,6 +62,18 @@ public class CryptoMetrics {
                 .description("解封次数")
                 .register(meterRegistry);
 
+        this.keyprovIssueCounter = Counter.builder("crypto.keyprov.issue.count")
+                .description("数据密钥下发次数")
+                .register(meterRegistry);
+
+        this.sessionEncryptCounter = Counter.builder("crypto.session.encrypt.count")
+                .description("SESSION模式加密次数")
+                .register(meterRegistry);
+
+        this.sessionDecryptCounter = Counter.builder("crypto.session.decrypt.count")
+                .description("SESSION模式解密次数")
+                .register(meterRegistry);
+
         this.encryptTimer = Timer.builder("crypto.encrypt.duration")
                 .description("加密时延")
                 .register(meterRegistry);
@@ -78,6 +96,18 @@ public class CryptoMetrics {
 
         this.provisioningUnwrapTimer = Timer.builder("crypto.provisioning.unwrap.duration")
                 .description("解封时延")
+                .register(meterRegistry);
+
+        this.keyprovIssueTimer = Timer.builder("crypto.keyprov.issue.duration")
+                .description("数据密钥下发时延")
+                .register(meterRegistry);
+
+        this.sessionEncryptTimer = Timer.builder("crypto.session.encrypt.duration")
+                .description("SESSION模式加密时延")
+                .register(meterRegistry);
+
+        this.sessionDecryptTimer = Timer.builder("crypto.session.decrypt.duration")
+                .description("SESSION模式解密时延")
                 .register(meterRegistry);
     }
 
@@ -146,5 +176,35 @@ public class CryptoMetrics {
     public void recordProvisioningUnwrap(long duration) {
         provisioningUnwrapCounter.increment();
         provisioningUnwrapTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录数据密钥下发操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordKeyprovIssue(long duration) {
+        keyprovIssueCounter.increment();
+        keyprovIssueTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录SESSION模式加密操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordSessionEncrypt(long duration) {
+        sessionEncryptCounter.increment();
+        sessionEncryptTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录SESSION模式解密操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordSessionDecrypt(long duration) {
+        sessionDecryptCounter.increment();
+        sessionDecryptTimer.record(duration, TimeUnit.MILLISECONDS);
     }
 }

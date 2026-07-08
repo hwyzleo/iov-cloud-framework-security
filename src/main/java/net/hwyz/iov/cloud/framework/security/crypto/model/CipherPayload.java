@@ -12,6 +12,7 @@ public class CipherPayload implements Serializable {
 
     private byte[] magic;
     private int ver;
+    private int mode;
     private int headerLen;
     private EnvelopeHeader header;
     private byte[] ciphertext;
@@ -33,6 +34,17 @@ public class CipherPayload implements Serializable {
 
     public void setVer(int ver) {
         this.ver = ver;
+    }
+
+    /**
+     * 加解密模式（0=ENVELOPE, 1=SESSION）
+     */
+    public int getMode() {
+        return mode;
+    }
+
+    public void setMode(int mode) {
+        this.mode = mode;
     }
 
     public int getHeaderLen() {
@@ -64,7 +76,7 @@ public class CipherPayload implements Serializable {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         CipherPayload that = (CipherPayload) o;
-        return ver == that.ver && headerLen == that.headerLen
+        return ver == that.ver && mode == that.mode && headerLen == that.headerLen
                 && Arrays.equals(magic, that.magic)
                 && java.util.Objects.equals(header, that.header)
                 && Arrays.equals(ciphertext, that.ciphertext);
@@ -72,7 +84,7 @@ public class CipherPayload implements Serializable {
 
     @Override
     public int hashCode() {
-        int result = java.util.Objects.hash(ver, headerLen, header);
+        int result = java.util.Objects.hash(ver, mode, headerLen, header);
         result = 31 * result + Arrays.hashCode(magic);
         result = 31 * result + Arrays.hashCode(ciphertext);
         return result;
@@ -81,7 +93,7 @@ public class CipherPayload implements Serializable {
     @Override
     public String toString() {
         return "CipherPayload{magic=" + Arrays.toString(magic) + ", ver=" + ver
-                + ", headerLen=" + headerLen + ", header=" + header
+                + ", mode=" + mode + ", headerLen=" + headerLen + ", header=" + header
                 + ", ciphertext=" + Arrays.toString(ciphertext) + "}";
     }
 }

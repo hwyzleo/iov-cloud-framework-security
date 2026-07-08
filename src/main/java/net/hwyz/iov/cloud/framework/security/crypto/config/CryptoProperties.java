@@ -51,6 +51,11 @@ public class CryptoProperties {
      */
     private Provisioning provisioning = new Provisioning();
 
+    /**
+     * 数据密钥下发门面配置（CR-005）
+     */
+    private KeyProv keyProv = new KeyProv();
+
     public Kms getKms() {
         return kms;
     }
@@ -105,6 +110,14 @@ public class CryptoProperties {
 
     public void setProvisioning(Provisioning provisioning) {
         this.provisioning = provisioning;
+    }
+
+    public KeyProv getKeyProv() {
+        return keyProv;
+    }
+
+    public void setKeyProv(KeyProv keyProv) {
+        this.keyProv = keyProv;
     }
 
     /**
@@ -241,6 +254,24 @@ public class CryptoProperties {
 
         public void setProvider(String provider) {
             this.provider = provider;
+        }
+    }
+
+    /**
+     * 数据密钥下发门面配置（CR-005）
+     */
+    public static class KeyProv {
+        /**
+         * 是否启用 DataKeyDistributionTemplate 门面装配
+         */
+        private boolean enabled = false;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

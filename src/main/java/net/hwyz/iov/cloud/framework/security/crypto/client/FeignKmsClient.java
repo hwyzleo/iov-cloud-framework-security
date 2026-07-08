@@ -3,6 +3,8 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KdfParams;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
 /**
@@ -96,12 +98,54 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
+    @Override
+    public WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial) {
+        try {
+            WrapDataKeyForDeviceRequest request = new WrapDataKeyForDeviceRequest();
+            request.setDeviceSn(deviceSn);
+            request.setBizType(bizType.name());
+            request.setCertSerial(certSerial);
+            WrapDataKeyForDeviceResponse response = kmsFeignClient.wrapActiveDataKeyForDevice(request);
+            return convertToWrappedDataKey(response);
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to wrap active data key for device from KMS", e);
+        }
+    }
+
+    @Override
+    public byte[] deriveSessionRoot(String keyName, String vin) {
+        try {
+            SessionRootRequest request = new SessionRootRequest();
+            request.setKeyName(keyName);
+            request.setVin(vin);
+            SessionRootResponse response = kmsFeignClient.deriveSessionRoot(request);
+            return response.getRoot();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to derive session root from KMS", e);
+        }
+    }
+
     private WrappedKey convertToWrappedKey(WrappedKeyResponse response) {
         WrappedKey wrapped = new WrappedKey();
         wrapped.setKeyId(response.getKeyId());
         wrapped.setKeyVersion(response.getKeyVersion());
         wrapped.setWrappedDek(response.getWrappedDek());
         return wrapped;
+    }
+
+    private WrappedDataKey convertToWrappedDataKey(WrapDataKeyForDeviceResponse response) {
+        KdfParams kdfParams = null;
+        if (response.getKdfSalt() != null) {
+            kdfParams = new KdfParams(response.getKdfSalt(),
+                    response.getKdfInfo() != null ? response.getKdfInfo() : new byte[0]);
+        }
+        return new WrappedDataKey(
+                response.getWrapped(),
+                response.getKeyId(),
+                response.getKeyVersion(),
+                response.getExpiry() != null ? java.time.Instant.parse(response.getExpiry()) : null,
+                kdfParams
+        );
     }
 
     public static class WrappedKeyResponse {
@@ -305,6 +349,126 @@ public class FeignKmsClient implements KmsClient {
 
         public void setPlaintext(byte[] plaintext) {
             this.plaintext = plaintext;
+        }
+    }
+
+    public static class WrapDataKeyForDeviceRequest {
+        private String deviceSn;
+        private String bizType;
+        private String certSerial;
+
+        public String getDeviceSn() {
+            return deviceSn;
+        }
+
+        public void setDeviceSn(String deviceSn) {
+            this.deviceSn = deviceSn;
+        }
+
+        public String getBizType() {
+            return bizType;
+        }
+
+        public void setBizType(String bizType) {
+            this.bizType = bizType;
+        }
+
+        public String getCertSerial() {
+            return certSerial;
+        }
+
+        public void setCertSerial(String certSerial) {
+            this.certSerial = certSerial;
+        }
+    }
+
+    public static class WrapDataKeyForDeviceResponse {
+        private byte[] wrapped;
+        private String keyId;
+        private int keyVersion;
+        private String expiry;
+        private byte[] kdfSalt;
+        private byte[] kdfInfo;
+
+        public byte[] getWrapped() {
+            return wrapped;
+        }
+
+        public void setWrapped(byte[] wrapped) {
+            this.wrapped = wrapped;
+        }
+
+        public String getKeyId() {
+            return keyId;
+        }
+
+        public void setKeyId(String keyId) {
+            this.keyId = keyId;
+        }
+
+        public int getKeyVersion() {
+            return keyVersion;
+        }
+
+        public void setKeyVersion(int keyVersion) {
+            this.keyVersion = keyVersion;
+        }
+
+        public String getExpiry() {
+            return expiry;
+        }
+
+        public void setExpiry(String expiry) {
+            this.expiry = expiry;
+        }
+
+        public byte[] getKdfSalt() {
+            return kdfSalt;
+        }
+
+        public void setKdfSalt(byte[] kdfSalt) {
+            this.kdfSalt = kdfSalt;
+        }
+
+        public byte[] getKdfInfo() {
+            return kdfInfo;
+        }
+
+        public void setKdfInfo(byte[] kdfInfo) {
+            this.kdfInfo = kdfInfo;
+        }
+    }
+
+    public static class SessionRootRequest {
+        private String keyName;
+        private String vin;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public String getVin() {
+            return vin;
+        }
+
+        public void setVin(String vin) {
+            this.vin = vin;
+        }
+    }
+
+    public static class SessionRootResponse {
+        private byte[] root;
+
+        public byte[] getRoot() {
+            return root;
+        }
+
+        public void setRoot(byte[] root) {
+            this.root = root;
         }
     }
 }

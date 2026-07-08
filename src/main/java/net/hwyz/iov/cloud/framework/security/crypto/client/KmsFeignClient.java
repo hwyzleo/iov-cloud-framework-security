@@ -30,4 +30,10 @@ public interface KmsFeignClient {
 
     @PostMapping("/transit/decrypt-named")
     FeignKmsClient.DecryptWithResponse decryptWith(@RequestBody FeignKmsClient.DecryptWithRequest request);
+
+    @PostMapping("/transit/datakey/wrap-for-device")
+    FeignKmsClient.WrapDataKeyForDeviceResponse wrapActiveDataKeyForDevice(@RequestBody FeignKmsClient.WrapDataKeyForDeviceRequest request);
+
+    @PostMapping("/transit/session-root")
+    FeignKmsClient.SessionRootResponse deriveSessionRoot(@RequestBody FeignKmsClient.SessionRootRequest request);
 }

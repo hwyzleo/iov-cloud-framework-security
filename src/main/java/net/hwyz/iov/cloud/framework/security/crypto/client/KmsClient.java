@@ -1,6 +1,7 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
 /**
@@ -59,4 +60,27 @@ public interface KmsClient {
      * @return 明文
      */
     byte[] decryptWith(String keyName, byte[] ciphertext);
+
+    /**
+     * 取活跃 DATA 密钥并用设备公钥/证书封装下发（CR-005）
+     * <p>
+     * 密钥明文不出 KMS，返回设备公钥封装的密文。
+     *
+     * @param deviceSn    设备 SN
+     * @param bizType     业务类型（须 supportsData==true）
+     * @param certSerial  收方设备证书序列号
+     * @return 设备公钥封装的活跃数据密钥
+     */
+    WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial);
+
+    /**
+     * 派生会话根（CR-005 SESSION 模式）
+     * <p>
+     * 按 keyName + VIN 取/派生会话根，供 HKDF 现算会话密钥。
+     *
+     * @param keyName 密钥名称（来自 bizType.prov.keyName）
+     * @param vin     VIN
+     * @return 会话根字节数组
+     */
+    byte[] deriveSessionRoot(String keyName, String vin);
 }

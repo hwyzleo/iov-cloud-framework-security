@@ -1,7 +1,9 @@
 package net.hwyz.iov.cloud.framework.security.crypto.config;
 
 import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
@@ -77,8 +79,9 @@ public class CryptoAutoConfiguration {
     @ConditionalOnProperty(prefix = "crypto", name = "envelope-enabled", havingValue = "true", matchIfMissing = true)
     public CryptoTemplate cryptoTemplate(DeviceResolver deviceResolver, KeyCache keyCache,
                                          AeadCipher aeadCipher, EnvelopeCodec envelopeCodec,
-                                         CryptoMetrics cryptoMetrics) {
-        return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec, cryptoMetrics);
+                                         CryptoMetrics cryptoMetrics, KmsClient kmsClient) {
+        return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec,
+                cryptoMetrics, kmsClient);
     }
 
     @Bean
@@ -88,6 +91,16 @@ public class CryptoAutoConfiguration {
                                                            CryptoProperties properties,
                                                            ObjectProvider<DeviceResolver> deviceResolverProvider) {
         return new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
+                deviceResolverProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.key-prov", name = "enabled", havingValue = "true")
+    public DataKeyDistributionTemplate dataKeyDistributionTemplate(KmsClient kmsClient,
+                                                                    CryptoMetrics cryptoMetrics,
+                                                                    ObjectProvider<DeviceResolver> deviceResolverProvider) {
+        return new DefaultDataKeyDistributionTemplate(kmsClient, cryptoMetrics,
                 deviceResolverProvider.getIfAvailable());
     }
 }
