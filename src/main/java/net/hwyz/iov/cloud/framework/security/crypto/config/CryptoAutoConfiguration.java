@@ -1,11 +1,15 @@
 package net.hwyz.iov.cloud.framework.security.crypto.config;
 
+import net.hwyz.iov.cloud.framework.security.crypto.CertEncryptionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DataKeyDistributionTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEncryptionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultSigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
@@ -14,6 +18,8 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultCertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
 import org.springframework.beans.factory.ObjectProvider;
@@ -98,9 +104,30 @@ public class CryptoAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "crypto.key-prov", name = "enabled", havingValue = "true")
     public DataKeyDistributionTemplate dataKeyDistributionTemplate(KmsClient kmsClient,
-                                                                    CryptoMetrics cryptoMetrics,
-                                                                    ObjectProvider<DeviceResolver> deviceResolverProvider) {
+                                                                     CryptoMetrics cryptoMetrics,
+                                                                     ObjectProvider<DeviceResolver> deviceResolverProvider) {
         return new DefaultDataKeyDistributionTemplate(kmsClient, cryptoMetrics,
                 deviceResolverProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.signing", name = "enabled", havingValue = "true")
+    public SigningTemplate signingTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics) {
+        return new DefaultSigningTemplate(kmsClient, cryptoMetrics);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CertResolver certResolver() {
+        return new DefaultCertResolver();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.certenc", name = "enabled", havingValue = "true")
+    public CertEncryptionTemplate certEncryptionTemplate(CryptoMetrics cryptoMetrics,
+                                                          ObjectProvider<CertResolver> certResolverProvider) {
+        return new DefaultCertEncryptionTemplate(cryptoMetrics, certResolverProvider.getIfAvailable());
     }
 }

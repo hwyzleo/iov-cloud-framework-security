@@ -40,8 +40,9 @@ public class DefaultDeviceResolver implements DeviceResolver {
 
     @Override
     public String resolveDeviceSn(String vin, BizType bizType) {
-        // 从BizType获取器件类别
-        String deviceCategory = bizType.getDeviceCategory().name();
+        // 从BizType获取器件类别（ORG 锚定的非对称密钥无器件类别，不经过设备解析）
+        String deviceCategory = bizType.getDeviceCategory() != null
+                ? bizType.getDeviceCategory().name() : "UNKNOWN";
 
         // 查询缓存
         String cacheKey = buildCacheKey(vin, deviceCategory);

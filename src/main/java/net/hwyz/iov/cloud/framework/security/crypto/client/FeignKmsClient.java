@@ -125,6 +125,47 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
+    @Override
+    public byte[] signWith(String keyName, byte[] data, BizType.SignAlgo algo) {
+        try {
+            SignRequest request = new SignRequest();
+            request.setKeyName(keyName);
+            request.setData(data);
+            request.setAlgo(algo.name());
+            SignResponse response = kmsFeignClient.signWith(request);
+            return response.getSignature();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to sign with KMS", e);
+        }
+    }
+
+    @Override
+    public boolean verifyWith(String keyName, byte[] data, byte[] signature, BizType.SignAlgo algo) {
+        try {
+            VerifyRequest request = new VerifyRequest();
+            request.setKeyName(keyName);
+            request.setData(data);
+            request.setSignature(signature);
+            request.setAlgo(algo.name());
+            VerifyResponse response = kmsFeignClient.verifyWith(request);
+            return response.isValid();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to verify with KMS", e);
+        }
+    }
+
+    @Override
+    public byte[] getPublicKey(String keyName) {
+        try {
+            PublicKeyRequest request = new PublicKeyRequest();
+            request.setKeyName(keyName);
+            PublicKeyResponse response = kmsFeignClient.getPublicKey(request);
+            return response.getPublicKey();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Failed to get public key from KMS", e);
+        }
+    }
+
     private WrappedKey convertToWrappedKey(WrappedKeyResponse response) {
         WrappedKey wrapped = new WrappedKey();
         wrapped.setKeyId(response.getKeyId());
@@ -469,6 +510,123 @@ public class FeignKmsClient implements KmsClient {
 
         public void setRoot(byte[] root) {
             this.root = root;
+        }
+    }
+
+    public static class SignRequest {
+        private String keyName;
+        private byte[] data;
+        private String algo;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public byte[] getData() {
+            return data;
+        }
+
+        public void setData(byte[] data) {
+            this.data = data;
+        }
+
+        public String getAlgo() {
+            return algo;
+        }
+
+        public void setAlgo(String algo) {
+            this.algo = algo;
+        }
+    }
+
+    public static class SignResponse {
+        private byte[] signature;
+
+        public byte[] getSignature() {
+            return signature;
+        }
+
+        public void setSignature(byte[] signature) {
+            this.signature = signature;
+        }
+    }
+
+    public static class VerifyRequest {
+        private String keyName;
+        private byte[] data;
+        private byte[] signature;
+        private String algo;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+
+        public byte[] getData() {
+            return data;
+        }
+
+        public void setData(byte[] data) {
+            this.data = data;
+        }
+
+        public byte[] getSignature() {
+            return signature;
+        }
+
+        public void setSignature(byte[] signature) {
+            this.signature = signature;
+        }
+
+        public String getAlgo() {
+            return algo;
+        }
+
+        public void setAlgo(String algo) {
+            this.algo = algo;
+        }
+    }
+
+    public static class VerifyResponse {
+        private boolean valid;
+
+        public boolean isValid() {
+            return valid;
+        }
+
+        public void setValid(boolean valid) {
+            this.valid = valid;
+        }
+    }
+
+    public static class PublicKeyRequest {
+        private String keyName;
+
+        public String getKeyName() {
+            return keyName;
+        }
+
+        public void setKeyName(String keyName) {
+            this.keyName = keyName;
+        }
+    }
+
+    public static class PublicKeyResponse {
+        private byte[] publicKey;
+
+        public byte[] getPublicKey() {
+            return publicKey;
+        }
+
+        public void setPublicKey(byte[] publicKey) {
+            this.publicKey = publicKey;
         }
     }
 }

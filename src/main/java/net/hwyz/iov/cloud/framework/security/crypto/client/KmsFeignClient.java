@@ -36,4 +36,13 @@ public interface KmsFeignClient {
 
     @PostMapping("/transit/session-root")
     FeignKmsClient.SessionRootResponse deriveSessionRoot(@RequestBody FeignKmsClient.SessionRootRequest request);
+
+    @PostMapping("/transit/sign")
+    FeignKmsClient.SignResponse signWith(@RequestBody FeignKmsClient.SignRequest request);
+
+    @PostMapping("/transit/verify")
+    FeignKmsClient.VerifyResponse verifyWith(@RequestBody FeignKmsClient.VerifyRequest request);
+
+    @PostMapping("/transit/public-key")
+    FeignKmsClient.PublicKeyResponse getPublicKey(@RequestBody FeignKmsClient.PublicKeyRequest request);
 }

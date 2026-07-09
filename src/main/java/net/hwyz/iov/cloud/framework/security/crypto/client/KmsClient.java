@@ -83,4 +83,35 @@ public interface KmsClient {
      * @return 会话根字节数组
      */
     byte[] deriveSessionRoot(String keyName, String vin);
+
+    /**
+     * KMS 内非对称签名（CR-006）
+     * <p>
+     * 私钥永不出 KMS，KMS 内部完成签名后返回签名值。
+     *
+     * @param keyName 密钥名称
+     * @param data    被签数据
+     * @param algo    签名算法
+     * @return 签名值（DER 编码）
+     */
+    byte[] signWith(String keyName, byte[] data, BizType.SignAlgo algo);
+
+    /**
+     * KMS 内非对称验签（CR-006）
+     *
+     * @param keyName   密钥名称
+     * @param data      被签数据
+     * @param signature 签名值
+     * @param algo      签名算法
+     * @return true 表示验签通过
+     */
+    boolean verifyWith(String keyName, byte[] data, byte[] signature, BizType.SignAlgo algo);
+
+    /**
+     * 取 KMS 托管非对称密钥的公钥 / 证书（CR-006）
+     *
+     * @param keyName 密钥名称
+     * @return 公钥 SPKI DER 或证书 DER
+     */
+    byte[] getPublicKey(String keyName);
 }

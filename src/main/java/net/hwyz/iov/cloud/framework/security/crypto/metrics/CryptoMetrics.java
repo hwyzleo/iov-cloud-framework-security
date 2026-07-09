@@ -23,6 +23,10 @@ public class CryptoMetrics {
     private final Counter keyprovIssueCounter;
     private final Counter sessionEncryptCounter;
     private final Counter sessionDecryptCounter;
+    private final Counter signingSignCounter;
+    private final Counter signingVerifyCounter;
+    private final Counter certencEncryptCounter;
+    private final Counter certencWrapKeyCounter;
     private final Timer encryptTimer;
     private final Timer decryptTimer;
     private final Timer kmsCallTimer;
@@ -32,6 +36,10 @@ public class CryptoMetrics {
     private final Timer keyprovIssueTimer;
     private final Timer sessionEncryptTimer;
     private final Timer sessionDecryptTimer;
+    private final Timer signingSignTimer;
+    private final Timer signingVerifyTimer;
+    private final Timer certencEncryptTimer;
+    private final Timer certencWrapKeyTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
         this.encryptCounter = Counter.builder("crypto.encrypt.count")
@@ -74,6 +82,22 @@ public class CryptoMetrics {
                 .description("SESSION模式解密次数")
                 .register(meterRegistry);
 
+        this.signingSignCounter = Counter.builder("crypto.signing.sign.count")
+                .description("非对称签名次数")
+                .register(meterRegistry);
+
+        this.signingVerifyCounter = Counter.builder("crypto.signing.verify.count")
+                .description("非对称验签次数")
+                .register(meterRegistry);
+
+        this.certencEncryptCounter = Counter.builder("crypto.certenc.encrypt.count")
+                .description("证书加密次数")
+                .register(meterRegistry);
+
+        this.certencWrapKeyCounter = Counter.builder("crypto.certenc.wrapkey.count")
+                .description("密钥封装次数")
+                .register(meterRegistry);
+
         this.encryptTimer = Timer.builder("crypto.encrypt.duration")
                 .description("加密时延")
                 .register(meterRegistry);
@@ -108,6 +132,22 @@ public class CryptoMetrics {
 
         this.sessionDecryptTimer = Timer.builder("crypto.session.decrypt.duration")
                 .description("SESSION模式解密时延")
+                .register(meterRegistry);
+
+        this.signingSignTimer = Timer.builder("crypto.signing.sign.duration")
+                .description("非对称签名时延")
+                .register(meterRegistry);
+
+        this.signingVerifyTimer = Timer.builder("crypto.signing.verify.duration")
+                .description("非对称验签时延")
+                .register(meterRegistry);
+
+        this.certencEncryptTimer = Timer.builder("crypto.certenc.encrypt.duration")
+                .description("证书加密时延")
+                .register(meterRegistry);
+
+        this.certencWrapKeyTimer = Timer.builder("crypto.certenc.wrapkey.duration")
+                .description("密钥封装时延")
                 .register(meterRegistry);
     }
 
@@ -206,5 +246,45 @@ public class CryptoMetrics {
     public void recordSessionDecrypt(long duration) {
         sessionDecryptCounter.increment();
         sessionDecryptTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录非对称签名操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordSigningSign(long duration) {
+        signingSignCounter.increment();
+        signingSignTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录非对称验签操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordSigningVerify(long duration) {
+        signingVerifyCounter.increment();
+        signingVerifyTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录证书加密操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordCertencEncrypt(long duration) {
+        certencEncryptCounter.increment();
+        certencEncryptTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录密钥封装操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordCertencWrapKey(long duration) {
+        certencWrapKeyCounter.increment();
+        certencWrapKeyTimer.record(duration, TimeUnit.MILLISECONDS);
     }
 }

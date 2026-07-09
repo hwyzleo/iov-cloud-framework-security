@@ -56,6 +56,16 @@ public class CryptoProperties {
      */
     private KeyProv keyProv = new KeyProv();
 
+    /**
+     * 非对称签名/验签门面配置（CR-006）
+     */
+    private Signing signing = new Signing();
+
+    /**
+     * 证书/公钥加密门面配置（CR-006）
+     */
+    private CertEnc certenc = new CertEnc();
+
     public Kms getKms() {
         return kms;
     }
@@ -118,6 +128,22 @@ public class CryptoProperties {
 
     public void setKeyProv(KeyProv keyProv) {
         this.keyProv = keyProv;
+    }
+
+    public Signing getSigning() {
+        return signing;
+    }
+
+    public void setSigning(Signing signing) {
+        this.signing = signing;
+    }
+
+    public CertEnc getCertenc() {
+        return certenc;
+    }
+
+    public void setCertenc(CertEnc certenc) {
+        this.certenc = certenc;
     }
 
     /**
@@ -263,6 +289,42 @@ public class CryptoProperties {
     public static class KeyProv {
         /**
          * 是否启用 DataKeyDistributionTemplate 门面装配
+         */
+        private boolean enabled = false;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    /**
+     * 非对称签名/验签门面配置（CR-006）
+     */
+    public static class Signing {
+        /**
+         * 是否启用 SigningTemplate 门面装配
+         */
+        private boolean enabled = false;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    /**
+     * 证书/公钥加密门面配置（CR-006）
+     */
+    public static class CertEnc {
+        /**
+         * 是否启用 CertEncryptionTemplate 门面装配
          */
         private boolean enabled = false;
 

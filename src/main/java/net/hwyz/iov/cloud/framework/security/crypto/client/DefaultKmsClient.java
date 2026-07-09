@@ -50,4 +50,19 @@ public class DefaultKmsClient implements KmsClient {
     public byte[] deriveSessionRoot(String keyName, String vin) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
+
+    @Override
+    public byte[] signWith(String keyName, byte[] data, BizType.SignAlgo algo) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public boolean verifyWith(String keyName, byte[] data, byte[] signature, BizType.SignAlgo algo) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public byte[] getPublicKey(String keyName) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
 }
