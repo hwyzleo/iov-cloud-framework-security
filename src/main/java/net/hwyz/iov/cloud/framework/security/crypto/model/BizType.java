@@ -25,6 +25,11 @@ public enum BizType {
     IMMO_GROUP_KEY(DeviceCategory.BCM, false, new Prov("immo-group", Anchor.VEHICLE), CryptoMode.ENVELOPE,
             KeyType.SYMMETRIC, false, null),
     /**
+     * OTA车辆侧激活/回执根
+     */
+    OTA_VEHICLE_ROOT(DeviceCategory.CGW, false, new Prov("ota-vehicle-root", Anchor.VEHICLE), CryptoMode.ENVELOPE,
+            KeyType.SYMMETRIC, false, null),
+    /**
      * TBOX设备根
      */
     TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
