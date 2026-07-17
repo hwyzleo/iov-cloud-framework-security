@@ -64,7 +64,15 @@ public class FeignKmsClient implements KmsClient {
             HmacRequest request = new HmacRequest();
             request.setInput(input);
             HmacResponse response = kmsFeignClient.hmac(keyName, request);
-            return response.getHmac();
+            String hmacValue = response.getData().getHmac();
+            // OpenBao返回格式: "vault:v1:<base64>"，需要去掉前缀
+            if (hmacValue.startsWith("vault:")) {
+                int lastColon = hmacValue.lastIndexOf(':');
+                if (lastColon > 0) {
+                    hmacValue = hmacValue.substring(lastColon + 1);
+                }
+            }
+            return java.util.Base64.getDecoder().decode(hmacValue);
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to compute HMAC from KMS", e);
         }
@@ -308,14 +316,26 @@ public class FeignKmsClient implements KmsClient {
     }
 
     public static class HmacResponse {
-        private byte[] hmac;
+        private HmacData data;
 
-        public byte[] getHmac() {
-            return hmac;
+        public HmacData getData() {
+            return data;
         }
 
-        public void setHmac(byte[] hmac) {
-            this.hmac = hmac;
+        public void setData(HmacData data) {
+            this.data = data;
+        }
+
+        public static class HmacData {
+            private String hmac;
+
+            public String getHmac() {
+                return hmac;
+            }
+
+            public void setHmac(String hmac) {
+                this.hmac = hmac;
+            }
         }
     }
 
