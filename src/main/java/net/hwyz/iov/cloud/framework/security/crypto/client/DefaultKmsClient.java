@@ -12,17 +12,17 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 public class DefaultKmsClient implements KmsClient {
 
     @Override
-    public WrappedKey getActiveDataKey(String deviceSn, BizType bizType) {
+    public WrappedKey getActiveDataKey(String keyName, BizType bizType) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 
     @Override
-    public WrappedKey getDataKeyById(String keyId) {
+    public WrappedKey getDataKeyById(String keyName, String keyId) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 
     @Override
-    public byte[] unwrap(WrappedKey wrapped) {
+    public byte[] unwrap(String keyName, WrappedKey wrapped) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 
@@ -42,7 +42,7 @@ public class DefaultKmsClient implements KmsClient {
     }
 
     @Override
-    public WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial) {
+    public WrappedDataKey wrapActiveDataKeyForDevice(String keyName, String deviceSn, BizType bizType, String certSerial) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 

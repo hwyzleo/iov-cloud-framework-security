@@ -47,9 +47,10 @@ public class DefaultDataKeyDistributionTemplate implements DataKeyDistributionTe
             validateDataCapability(bizType);
 
             String deviceSn = resolveDeviceSn(deviceSnOrVin, bizType);
+            String keyName = bizType.prov() != null ? bizType.prov().keyName() : "default";
 
             WrappedDataKey result = kmsClient.wrapActiveDataKeyForDevice(
-                    deviceSn, bizType, recipient.certSerial());
+                    keyName, deviceSn, bizType, recipient.certSerial());
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("数据密钥下发成功: deviceSn={}, bizType={}, keyId={}, certSerial={}, duration={}ms",

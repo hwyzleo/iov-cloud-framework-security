@@ -33,7 +33,7 @@ class DefaultDataKeyDistributionTemplateTest {
                 () -> template.issueActiveKeyForDevice("SN123", BizType.TBOX_DEVICE_ROOT,
                         new DeviceRecipient("cert-001")));
         assertEquals(CryptoException.Reason.INVALID_BIZ_TYPE, ex.getReason());
-        verify(kmsClient, never()).wrapActiveDataKeyForDevice(any(), any(), any());
+        verify(kmsClient, never()).wrapActiveDataKeyForDevice(any(), any(), any(), any());
     }
 
     @Test
@@ -45,7 +45,7 @@ class DefaultDataKeyDistributionTemplateTest {
                             new DeviceRecipient("cert-001")),
                     "Should fail-closed for " + bt.name());
         }
-        verify(kmsClient, never()).wrapActiveDataKeyForDevice(any(), any(), any());
+        verify(kmsClient, never()).wrapActiveDataKeyForDevice(any(), any(), any(), any());
     }
 
     @Test

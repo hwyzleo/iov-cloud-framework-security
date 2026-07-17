@@ -56,8 +56,9 @@ public class KeyCache {
 
         // 缓存未命中或已过期，从KMS获取
         try {
-            WrappedKey wrapped = kmsClient.getActiveDataKey(deviceSn, bizType);
-            byte[] dekPlaintext = kmsClient.unwrap(wrapped);
+            String keyName = bizType.prov() != null ? bizType.prov().keyName() : "default";
+            WrappedKey wrapped = kmsClient.getActiveDataKey(keyName, bizType);
+            byte[] dekPlaintext = kmsClient.unwrap(keyName, wrapped);
 
             CachedDataKey dataKey = new CachedDataKey();
             dataKey.setKeyId(wrapped.getKeyId());
@@ -91,12 +92,12 @@ public class KeyCache {
 
         // 缓存未命中或已过期，从KMS获取
         try {
-            WrappedKey wrapped = kmsClient.getDataKeyById(keyId);
+            WrappedKey wrapped = kmsClient.getDataKeyById(keyId, keyId);
             if (wrapped == null) {
                 throw new KeyRevokedException("Key not found or revoked: " + keyId);
             }
 
-            byte[] dekPlaintext = kmsClient.unwrap(wrapped);
+            byte[] dekPlaintext = kmsClient.unwrap(keyId, wrapped);
 
             CachedDataKey dataKey = new CachedDataKey();
             dataKey.setKeyId(wrapped.getKeyId());

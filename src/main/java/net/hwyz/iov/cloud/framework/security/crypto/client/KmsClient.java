@@ -12,27 +12,29 @@ public interface KmsClient {
     /**
      * 获取活跃数据密钥
      *
-     * @param deviceSn 设备SN
-     * @param bizType  业务类型
+     * @param keyName 密钥名称
+     * @param bizType 业务类型
      * @return 包装密钥
      */
-    WrappedKey getActiveDataKey(String deviceSn, BizType bizType);
+    WrappedKey getActiveDataKey(String keyName, BizType bizType);
 
     /**
      * 根据keyId获取历史数据密钥
      *
-     * @param keyId 密钥ID
+     * @param keyName 密钥名称
+     * @param keyId   密钥ID
      * @return 包装密钥
      */
-    WrappedKey getDataKeyById(String keyId);
+    WrappedKey getDataKeyById(String keyName, String keyId);
 
     /**
      * 解封包装密钥
      *
+     * @param keyName 密钥名称
      * @param wrapped 包装密钥
      * @return 明文DEK
      */
-    byte[] unwrap(WrappedKey wrapped);
+    byte[] unwrap(String keyName, WrappedKey wrapped);
 
     /**
      * HMAC派生
@@ -66,12 +68,13 @@ public interface KmsClient {
      * <p>
      * 密钥明文不出 KMS，返回设备公钥封装的密文。
      *
-     * @param deviceSn    设备 SN
-     * @param bizType     业务类型（须 supportsData==true）
-     * @param certSerial  收方设备证书序列号
+     * @param keyName   密钥名称
+     * @param deviceSn  设备 SN
+     * @param bizType   业务类型（须 supportsData==true）
+     * @param certSerial 收方设备证书序列号
      * @return 设备公钥封装的活跃数据密钥
      */
-    WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial);
+    WrappedDataKey wrapActiveDataKeyForDevice(String keyName, String deviceSn, BizType bizType, String certSerial);
 
     /**
      * 派生会话根（CR-005 SESSION 模式）

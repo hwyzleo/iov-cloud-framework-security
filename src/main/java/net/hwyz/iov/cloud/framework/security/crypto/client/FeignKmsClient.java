@@ -21,12 +21,11 @@ public class FeignKmsClient implements KmsClient {
     }
 
     @Override
-    public WrappedKey getActiveDataKey(String deviceSn, BizType bizType) {
+    public WrappedKey getActiveDataKey(String keyName, BizType bizType) {
         try {
             DataKeyRequest request = new DataKeyRequest();
-            request.setDeviceSn(deviceSn);
             request.setBizType(bizType.name());
-            WrappedKeyResponse response = kmsFeignClient.getActiveDataKey(request);
+            WrappedKeyResponse response = kmsFeignClient.getActiveDataKey(keyName, request);
             return convertToWrappedKey(response);
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to get active data key from KMS", e);
@@ -34,11 +33,11 @@ public class FeignKmsClient implements KmsClient {
     }
 
     @Override
-    public WrappedKey getDataKeyById(String keyId) {
+    public WrappedKey getDataKeyById(String keyName, String keyId) {
         try {
             DataKeyByIdRequest request = new DataKeyByIdRequest();
             request.setKeyId(keyId);
-            WrappedKeyResponse response = kmsFeignClient.getDataKeyById(request);
+            WrappedKeyResponse response = kmsFeignClient.getDataKeyById(keyName, request);
             return convertToWrappedKey(response);
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to get data key by ID from KMS", e);
@@ -46,13 +45,13 @@ public class FeignKmsClient implements KmsClient {
     }
 
     @Override
-    public byte[] unwrap(WrappedKey wrapped) {
+    public byte[] unwrap(String keyName, WrappedKey wrapped) {
         try {
             UnwrapRequest request = new UnwrapRequest();
             request.setKeyId(wrapped.getKeyId());
             request.setKeyVersion(wrapped.getKeyVersion());
             request.setWrappedDek(wrapped.getWrappedDek());
-            UnwrapResponse response = kmsFeignClient.unwrap(request);
+            UnwrapResponse response = kmsFeignClient.unwrap(keyName, request);
             return response.getDekPlaintext();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to unwrap key from KMS", e);
@@ -63,9 +62,8 @@ public class FeignKmsClient implements KmsClient {
     public byte[] hmac(String keyName, byte[] input) {
         try {
             HmacRequest request = new HmacRequest();
-            request.setKeyName(keyName);
             request.setInput(input);
-            HmacResponse response = kmsFeignClient.hmac(request);
+            HmacResponse response = kmsFeignClient.hmac(keyName, request);
             return response.getHmac();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to compute HMAC from KMS", e);
@@ -76,9 +74,8 @@ public class FeignKmsClient implements KmsClient {
     public byte[] encryptWith(String keyName, byte[] plaintext) {
         try {
             EncryptWithRequest request = new EncryptWithRequest();
-            request.setKeyName(keyName);
             request.setPlaintext(plaintext);
-            EncryptWithResponse response = kmsFeignClient.encryptWith(request);
+            EncryptWithResponse response = kmsFeignClient.encryptWith(keyName, request);
             return response.getCiphertext();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to encrypt with named key from KMS", e);
@@ -89,9 +86,8 @@ public class FeignKmsClient implements KmsClient {
     public byte[] decryptWith(String keyName, byte[] ciphertext) {
         try {
             DecryptWithRequest request = new DecryptWithRequest();
-            request.setKeyName(keyName);
             request.setCiphertext(ciphertext);
-            DecryptWithResponse response = kmsFeignClient.decryptWith(request);
+            DecryptWithResponse response = kmsFeignClient.decryptWith(keyName, request);
             return response.getPlaintext();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to decrypt with named key from KMS", e);
@@ -99,7 +95,7 @@ public class FeignKmsClient implements KmsClient {
     }
 
     @Override
-    public WrappedDataKey wrapActiveDataKeyForDevice(String deviceSn, BizType bizType, String certSerial) {
+    public WrappedDataKey wrapActiveDataKeyForDevice(String keyName, String deviceSn, BizType bizType, String certSerial) {
         try {
             WrapDataKeyForDeviceRequest request = new WrapDataKeyForDeviceRequest();
             request.setDeviceSn(deviceSn);
@@ -116,9 +112,8 @@ public class FeignKmsClient implements KmsClient {
     public byte[] deriveSessionRoot(String keyName, String vin) {
         try {
             SessionRootRequest request = new SessionRootRequest();
-            request.setKeyName(keyName);
             request.setVin(vin);
-            SessionRootResponse response = kmsFeignClient.deriveSessionRoot(request);
+            SessionRootResponse response = kmsFeignClient.deriveSessionRoot(keyName, request);
             return response.getRoot();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to derive session root from KMS", e);
@@ -129,10 +124,9 @@ public class FeignKmsClient implements KmsClient {
     public byte[] signWith(String keyName, byte[] data, BizType.SignAlgo algo) {
         try {
             SignRequest request = new SignRequest();
-            request.setKeyName(keyName);
             request.setData(data);
             request.setAlgo(algo.name());
-            SignResponse response = kmsFeignClient.signWith(request);
+            SignResponse response = kmsFeignClient.signWith(keyName, request);
             return response.getSignature();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to sign with KMS", e);
@@ -143,11 +137,10 @@ public class FeignKmsClient implements KmsClient {
     public boolean verifyWith(String keyName, byte[] data, byte[] signature, BizType.SignAlgo algo) {
         try {
             VerifyRequest request = new VerifyRequest();
-            request.setKeyName(keyName);
             request.setData(data);
             request.setSignature(signature);
             request.setAlgo(algo.name());
-            VerifyResponse response = kmsFeignClient.verifyWith(request);
+            VerifyResponse response = kmsFeignClient.verifyWith(keyName, request);
             return response.isValid();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to verify with KMS", e);
@@ -158,8 +151,7 @@ public class FeignKmsClient implements KmsClient {
     public byte[] getPublicKey(String keyName) {
         try {
             PublicKeyRequest request = new PublicKeyRequest();
-            request.setKeyName(keyName);
-            PublicKeyResponse response = kmsFeignClient.getPublicKey(request);
+            PublicKeyResponse response = kmsFeignClient.getPublicKey(keyName, request);
             return response.getPublicKey();
         } catch (Exception e) {
             throw new CryptoDependencyUnavailableException("Failed to get public key from KMS", e);
