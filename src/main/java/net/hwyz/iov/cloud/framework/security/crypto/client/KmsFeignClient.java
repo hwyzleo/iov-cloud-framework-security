@@ -1,16 +1,14 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
 /**
  * KMS Feign客户端接口
- * 只有在配置了 crypto.kms.endpoint 时才会创建
+ * 通过Nacos服务发现调用 kms-service
  */
-@FeignClient(name = "kms-service", url = "${crypto.kms.endpoint}")
-@ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
+@FeignClient(name = "kms-service")
 public interface KmsFeignClient {
 
     @PostMapping("/transit/datakey")
