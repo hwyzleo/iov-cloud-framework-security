@@ -156,6 +156,11 @@ public class CryptoProperties {
         private String endpoint;
 
         /**
+         * OpenBao/Vault访问令牌
+         */
+        private String token;
+
+        /**
          * 连接超时
          */
         private Duration connectTimeout = Duration.ofMillis(500);
@@ -176,6 +181,14 @@ public class CryptoProperties {
 
         public void setEndpoint(String endpoint) {
             this.endpoint = endpoint;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
         }
 
         public Duration getConnectTimeout() {

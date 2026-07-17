@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
  * KMS Feign客户端接口
  * 只有在配置了 crypto.kms.endpoint 时才会创建
  */
-@FeignClient(name = "kms-service", url = "${crypto.kms.endpoint}")
+@FeignClient(name = "kms-service", url = "${crypto.kms.endpoint}", configuration = KmsFeignConfiguration.class)
 @ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
 public interface KmsFeignClient {
 
