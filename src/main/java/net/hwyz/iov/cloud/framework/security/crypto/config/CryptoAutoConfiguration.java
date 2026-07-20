@@ -1,9 +1,11 @@
 package net.hwyz.iov.cloud.framework.security.crypto.config;
 
 import net.hwyz.iov.cloud.framework.security.crypto.CertEncryptionTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.CertEnrollmentTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEncryptionTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEnrollmentTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
@@ -13,11 +15,16 @@ import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultPkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.FeignKmsClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.FeignPkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.PkiClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.PkiFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
+import net.hwyz.iov.cloud.framework.security.crypto.model.CertificateProfile;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultCertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
@@ -28,6 +35,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+
+import java.util.List;
 
 /**
  * 加解密自动配置
@@ -125,9 +134,33 @@ public class CryptoAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnProperty(prefix = "crypto.certenc", name = "enabled", havingValue = "true")
+    @ConditionalOnProperty(prefix = "crypto.pki", name = "endpoint")
+    public PkiClient pkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient) {
+        return new FeignPkiClient(properties, pkiFeignClient);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PkiClient defaultPkiClient() {
+        return new DefaultPkiClient();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.pki", name = "endpoint")
     public CertEncryptionTemplate certEncryptionTemplate(CryptoMetrics cryptoMetrics,
-                                                          ObjectProvider<CertResolver> certResolverProvider) {
+                                                           ObjectProvider<CertResolver> certResolverProvider) {
         return new DefaultCertEncryptionTemplate(cryptoMetrics, certResolverProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.pki", name = "endpoint")
+    public CertEnrollmentTemplate certEnrollmentTemplate(
+            PkiClient pkiClient,
+            CryptoMetrics cryptoMetrics,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) List<CertificateProfile> allowedProfiles) {
+        return new DefaultCertEnrollmentTemplate(pkiClient, cryptoMetrics,
+                allowedProfiles != null ? allowedProfiles : List.of());
     }
 }

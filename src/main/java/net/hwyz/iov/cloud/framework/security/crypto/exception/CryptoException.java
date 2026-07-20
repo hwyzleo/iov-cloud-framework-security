@@ -12,7 +12,12 @@ public abstract class CryptoException extends RuntimeException {
         DEPENDENCY_UNAVAILABLE,
         KEY_REVOKED,
         INTEGRITY_VERIFICATION_FAILED,
-        INVALID_BIZ_TYPE
+        INVALID_BIZ_TYPE,
+        INVALID_CERTIFICATE_REQUEST,
+        CERTIFICATE_PROFILE_NOT_ALLOWED,
+        CERTIFICATE_APPLICATION_REJECTED,
+        CERTIFICATE_NOT_READY,
+        PKI_DEPENDENCY_UNAVAILABLE
     }
 
     public CryptoException(Reason reason, String message) {

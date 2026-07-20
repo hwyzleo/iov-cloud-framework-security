@@ -62,9 +62,9 @@ public class CryptoProperties {
     private Signing signing = new Signing();
 
     /**
-     * 证书/公钥加密门面配置（CR-006）
+     * PKI 证书注册门面配置（CR-007）
      */
-    private CertEnc certenc = new CertEnc();
+    private Pki pki = new Pki();
 
     public Kms getKms() {
         return kms;
@@ -138,12 +138,12 @@ public class CryptoProperties {
         this.signing = signing;
     }
 
-    public CertEnc getCertenc() {
-        return certenc;
+    public Pki getPki() {
+        return pki;
     }
 
-    public void setCertenc(CertEnc certenc) {
-        this.certenc = certenc;
+    public void setPki(Pki pki) {
+        this.pki = pki;
     }
 
     /**
@@ -333,20 +333,103 @@ public class CryptoProperties {
     }
 
     /**
-     * 证书/公钥加密门面配置（CR-006）
+     * PKI 证书注册门面配置（CR-007）
      */
-    public static class CertEnc {
+    public static class Pki {
         /**
-         * 是否启用 CertEncryptionTemplate 门面装配
+         * PKI 服务端点
          */
-        private boolean enabled = false;
+        private String endpoint;
 
-        public boolean isEnabled() {
-            return enabled;
+        /**
+         * PKI 访问令牌
+         */
+        private String token;
+
+        /**
+         * 连接超时
+         */
+        private Duration connectTimeout = Duration.ofMillis(500);
+
+        /**
+         * 读超时
+         */
+        private Duration readTimeout = Duration.ofSeconds(2);
+
+        /**
+         * 重试配置
+         */
+        private Retry retry = new Retry();
+
+        public String getEndpoint() {
+            return endpoint;
         }
 
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
+        public void setEndpoint(String endpoint) {
+            this.endpoint = endpoint;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+
+        public Duration getConnectTimeout() {
+            return connectTimeout;
+        }
+
+        public void setConnectTimeout(Duration connectTimeout) {
+            this.connectTimeout = connectTimeout;
+        }
+
+        public Duration getReadTimeout() {
+            return readTimeout;
+        }
+
+        public void setReadTimeout(Duration readTimeout) {
+            this.readTimeout = readTimeout;
+        }
+
+        public Retry getRetry() {
+            return retry;
+        }
+
+        public void setRetry(Retry retry) {
+            this.retry = retry;
+        }
+
+        /**
+         * 重试配置
+         */
+        public static class Retry {
+            /**
+             * 最大重试次数
+             */
+            private int maxAttempts = 2;
+
+            /**
+             * 基础退避时间
+             */
+            private Duration baseBackoff = Duration.ofMillis(100);
+
+            public int getMaxAttempts() {
+                return maxAttempts;
+            }
+
+            public void setMaxAttempts(int maxAttempts) {
+                this.maxAttempts = maxAttempts;
+            }
+
+            public Duration getBaseBackoff() {
+                return baseBackoff;
+            }
+
+            public void setBaseBackoff(Duration baseBackoff) {
+                this.baseBackoff = baseBackoff;
+            }
         }
     }
 }

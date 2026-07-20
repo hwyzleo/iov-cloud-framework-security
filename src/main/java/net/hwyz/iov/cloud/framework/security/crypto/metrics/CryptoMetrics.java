@@ -27,6 +27,8 @@ public class CryptoMetrics {
     private final Counter signingVerifyCounter;
     private final Counter certencEncryptCounter;
     private final Counter certencWrapKeyCounter;
+    private final Counter certificateEnrollmentCounter;
+    private final Counter certificateEnrollmentQueryCounter;
     private final Timer encryptTimer;
     private final Timer decryptTimer;
     private final Timer kmsCallTimer;
@@ -40,6 +42,8 @@ public class CryptoMetrics {
     private final Timer signingVerifyTimer;
     private final Timer certencEncryptTimer;
     private final Timer certencWrapKeyTimer;
+    private final Timer certificateEnrollmentTimer;
+    private final Timer certificateEnrollmentQueryTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
         this.encryptCounter = Counter.builder("crypto.encrypt.count")
@@ -98,6 +102,14 @@ public class CryptoMetrics {
                 .description("密钥封装次数")
                 .register(meterRegistry);
 
+        this.certificateEnrollmentCounter = Counter.builder("crypto.enrollment.submit.count")
+                .description("证书申请提交次数")
+                .register(meterRegistry);
+
+        this.certificateEnrollmentQueryCounter = Counter.builder("crypto.enrollment.query.count")
+                .description("证书申请查询次数")
+                .register(meterRegistry);
+
         this.encryptTimer = Timer.builder("crypto.encrypt.duration")
                 .description("加密时延")
                 .register(meterRegistry);
@@ -148,6 +160,14 @@ public class CryptoMetrics {
 
         this.certencWrapKeyTimer = Timer.builder("crypto.certenc.wrapkey.duration")
                 .description("密钥封装时延")
+                .register(meterRegistry);
+
+        this.certificateEnrollmentTimer = Timer.builder("crypto.enrollment.submit.duration")
+                .description("证书申请提交时延")
+                .register(meterRegistry);
+
+        this.certificateEnrollmentQueryTimer = Timer.builder("crypto.enrollment.query.duration")
+                .description("证书申请查询时延")
                 .register(meterRegistry);
     }
 
@@ -286,5 +306,25 @@ public class CryptoMetrics {
     public void recordCertencWrapKey(long duration) {
         certencWrapKeyCounter.increment();
         certencWrapKeyTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录证书申请提交操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordCertificateEnrollment(long duration) {
+        certificateEnrollmentCounter.increment();
+        certificateEnrollmentTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录证书申请查询操作
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordCertificateEnrollmentQuery(long duration) {
+        certificateEnrollmentQueryCounter.increment();
+        certificateEnrollmentQueryTimer.record(duration, TimeUnit.MILLISECONDS);
     }
 }
