@@ -35,6 +35,11 @@ public enum BizType {
     TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
             KeyType.SYMMETRIC, false, null),
     /**
+     * 中央计算单元设备根
+     */
+    CCU_DEVICE_ROOT(DeviceCategory.CCU, false, new Prov("ccu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
+            KeyType.SYMMETRIC, false, null),
+    /**
      * 中央网关设备根
      */
     CGW_DEVICE_ROOT(DeviceCategory.CGW, false, new Prov("cgw-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
@@ -182,6 +187,7 @@ public enum BizType {
      */
     public enum DeviceCategory {
         TBOX,
+        CCU,
         CGW,
         AD_DCU,
         CPT_DCU,

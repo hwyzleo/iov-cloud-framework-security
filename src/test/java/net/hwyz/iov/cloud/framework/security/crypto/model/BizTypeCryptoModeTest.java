@@ -14,6 +14,7 @@ class BizTypeCryptoModeTest {
     @Test
     void deviceRoots_areEnvelope() {
         assertEquals(BizType.CryptoMode.ENVELOPE, BizType.TBOX_DEVICE_ROOT.cryptoMode());
+        assertEquals(BizType.CryptoMode.ENVELOPE, BizType.CCU_DEVICE_ROOT.cryptoMode());
         assertEquals(BizType.CryptoMode.ENVELOPE, BizType.CGW_DEVICE_ROOT.cryptoMode());
         assertEquals(BizType.CryptoMode.ENVELOPE, BizType.IMMO_GROUP_KEY.cryptoMode());
         assertEquals(BizType.CryptoMode.ENVELOPE, BizType.KLD_DEVICE_ROOT.cryptoMode());
