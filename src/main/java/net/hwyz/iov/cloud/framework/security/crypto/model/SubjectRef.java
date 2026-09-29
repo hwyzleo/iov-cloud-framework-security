@@ -33,6 +33,10 @@ public record SubjectRef(
          */
         DEVICE_SN,
         /**
+         * 设备安全芯片 UID（hsm_uid / ecu_uid，证书主体身份，VMD-DSN-CR-054）
+         */
+        DEVICE_UID,
+        /**
          * 车辆识别号
          */
         VIN,

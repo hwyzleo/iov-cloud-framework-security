@@ -135,6 +135,33 @@ class DefaultCertEnrollmentTemplateTest {
     }
 
     @Test
+    void apply_shouldSucceed_withTboxTspClientProfile() {
+        // Given — 与 CryptoAutoConfiguration.tboxTspClientCertificateProfile() 注册值保持一致（回归守卫）
+        CertificateProfile tboxProfile = new CertificateProfile(
+                "TBOX_TSP_CLIENT", "TBOX_TSP_CLIENT",
+                CertificateProfile.SubjectType.DEVICE_IDENTITY, "EC", "TBOX 设备身份证书");
+        DefaultCertEnrollmentTemplate tboxTemplate = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(tboxProfile));
+        byte[] csr = "-----BEGIN CERTIFICATE REQUEST-----\nMIIBPjCB...\n-----END CERTIFICATE REQUEST-----".getBytes();
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.DEVICE_UID,
+                "00000000000000000000000000000001");
+        CertApplyRequest request = new CertApplyRequest(
+                tboxProfile, csr, subject, "idempotency-key-tbox", Map.of());
+
+        PkiClient.ApplyResponse pkiResponse = new PkiClient.ApplyResponse(
+                "request-tbox", "PENDING", "Submitted");
+        when(pkiClient.submit(any())).thenReturn(pkiResponse);
+
+        // When
+        CertApplyResult result = tboxTemplate.apply(request);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(EnrollmentState.PENDING, result.state());
+        verify(pkiClient).submit(any());
+    }
+
+    @Test
     void apply_shouldThrowException_withEmptyCsr() {
         // Given
         byte[] csr = new byte[0];

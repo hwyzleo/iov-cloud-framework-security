@@ -163,4 +163,21 @@ public class CryptoAutoConfiguration {
         return new DefaultCertEnrollmentTemplate(pkiClient, cryptoMetrics,
                 allowedProfiles != null ? allowedProfiles : List.of());
     }
+
+    /**
+     * 受治理证书 profile 注册表（FW-SEC-DSN-CR-007 §2）
+     * <p>
+     * 作为 {@link CertificateProfile} Bean 注入容器，被 {@link DefaultCertEnrollmentTemplate#apply}
+     * 的 allowedProfiles 白名单收集。name 须与业务方（VMD TBOX 设备证书申请）提交的 profile 名一致，
+     * 否则将整体 fail-closed 拒绝。新增或修改 profile 走 CR + framework 发版。
+     */
+    @Bean
+    public CertificateProfile tboxTspClientCertificateProfile() {
+        return new CertificateProfile(
+                "TBOX_TSP_CLIENT",
+                "TBOX_TSP_CLIENT",
+                CertificateProfile.SubjectType.DEVICE_IDENTITY,
+                "EC",
+                "TBOX 设备身份证书");
+    }
 }
