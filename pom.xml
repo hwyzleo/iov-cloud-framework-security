@@ -80,6 +80,14 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
         </dependency>
+
+        <!-- 测试：生成真实 CSR / CA / 证书链材料（证书签发一致性校验测试用，不随制品发布） -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.73</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
