@@ -81,6 +81,27 @@
             <artifactId>micrometer-core</artifactId>
         </dependency>
 
+        <!-- JOSE/JWT：step-ca JWK provisioner 一次性令牌（OTT）签名（FW-SEC-DSN-CR-008） -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>9.37.2</version>
+        </dependency>
+
+        <!-- 契约测试：官方 smallstep/step-ca 镜像（FW-SEC-DSN-CR-008 §9），不随制品发布 -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.19.8</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>1.19.8</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- 测试：生成真实 CSR / CA / 证书链材料（证书签发一致性校验测试用，不随制品发布） -->
         <dependency>
             <groupId>org.bouncycastle</groupId>

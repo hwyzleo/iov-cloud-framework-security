@@ -54,16 +54,34 @@ public interface PkiClient {
     CertificateResponse queryCertificate(String serialNumber);
 
     /**
+     * 是否自行管理 enrollment 结果存储（FW-SEC-DSN-CR-008 §5.1）
+     * <p>
+     * step-ca 为同步签发且无 requestId/status/certificate 三段式契约，由
+     * {@code StepCaPkiClient} 在 submit 内原子写入结果存储并自行维护状态；
+     * legacy-rest 沿用 PKI 自研 REST 契约，由门面在 submit 后回写结果存储。
+     * 门面据此决定结果存储的写入时机，避免双写。
+     *
+     * @return true 表示该实现自行管理结果存储
+     */
+    default boolean managesResultStore() {
+        return false;
+    }
+
+    /**
      * 证书申请命令
      *
+     * @param requestId      framework 生成的稳定请求 ID（UUIDv7，FW-SEC-DSN-CR-008 §5.2）
      * @param pkiProfileId   PKI profile 标识
+     * @param profileName    framework 治理的 CertificateProfile 名称（step-ca policy 映射用）
      * @param csr            CSR（DER 或 PEM 编码）
      * @param subject        主体信息
      * @param idempotencyKey 幂等键
      * @param context        上下文信息
      */
     record ApplyCommand(
+            String requestId,
             String pkiProfileId,
+            String profileName,
             byte[] csr,
             String subject,
             String idempotencyKey,

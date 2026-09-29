@@ -8,19 +8,22 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 
 /**
- * Feign PKI客户端实现
+ * legacy-rest PKI客户端实现（FW-SEC-DSN-CR-008 §2.1/§8）
  * <p>
- * 通过Feign调用PKI REST API，负责 mTLS/OAuth2/AppRole 等具体鉴权适配。
+ * 通过Feign调用自研 PKI REST API（/v1/certificates/*），负责 mTLS/OAuth2/AppRole 等
+ * 具体鉴权适配与异步状态查询、现有重试语义。CR-008 保留并命名为 legacy-rest，
+ * 待依赖盘点与迁移完成后再单独发起兼容清理 CR。
+ * <p>
  * PKI 厂商状态与错误码在适配层映射为稳定的 framework 异常。
  */
-public class FeignPkiClient implements PkiClient {
+public class LegacyRestPkiClient implements PkiClient {
 
-    private static final Logger log = LoggerFactory.getLogger(FeignPkiClient.class);
+    private static final Logger log = LoggerFactory.getLogger(LegacyRestPkiClient.class);
 
     private final CryptoProperties properties;
     private final PkiFeignClient pkiFeignClient;
 
-    public FeignPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient) {
+    public LegacyRestPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient) {
         this.properties = properties;
         this.pkiFeignClient = pkiFeignClient;
     }

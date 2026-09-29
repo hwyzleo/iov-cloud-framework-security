@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.config;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -347,6 +348,22 @@ public class CryptoProperties {
         private String token;
 
         /**
+         * PKI 提供方（legacy-rest | step-ca，FW-SEC-DSN-CR-008 §2.1）。
+         * 未配置时保持 legacy-rest 行为。
+         */
+        private String provider;
+
+        /**
+         * 证书注册门面装配开关
+         */
+        private Enrollment enrollment = new Enrollment();
+
+        /**
+         * step-ca 原生适配配置（provider=step-ca 时生效，FW-SEC-DSN-CR-008 §2/§4/§7）
+         */
+        private StepCa stepCa = new StepCa();
+
+        /**
          * 连接超时
          */
         private Duration connectTimeout = Duration.ofMillis(500);
@@ -377,6 +394,30 @@ public class CryptoProperties {
             this.token = token;
         }
 
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
+        }
+
+        public Enrollment getEnrollment() {
+            return enrollment;
+        }
+
+        public void setEnrollment(Enrollment enrollment) {
+            this.enrollment = enrollment;
+        }
+
+        public StepCa getStepCa() {
+            return stepCa;
+        }
+
+        public void setStepCa(StepCa stepCa) {
+            this.stepCa = stepCa;
+        }
+
         public Duration getConnectTimeout() {
             return connectTimeout;
         }
@@ -399,6 +440,222 @@ public class CryptoProperties {
 
         public void setRetry(Retry retry) {
             this.retry = retry;
+        }
+
+        /**
+         * 证书注册门面装配开关
+         */
+        public static class Enrollment {
+            /**
+             * 是否装配 CertEnrollmentTemplate（默认 true，仍要求配置 crypto.pki.endpoint）
+             */
+            private boolean enabled = true;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+        }
+
+        /**
+         * step-ca 原生适配配置（provider=step-ca 时生效，FW-SEC-DSN-CR-008 §2/§4/§7）
+         */
+        public static class StepCa {
+            /**
+             * 根证书 SHA-256 指纹（固定信任锚，必填）
+             */
+            private String rootSha256;
+
+            /**
+             * OTT 提供者类型（当前仅 jwk）
+             */
+            private String tokenProvider = "jwk";
+
+            /**
+             * OTT 默认有效期（默认 5 分钟且可缩短）
+             */
+            private Duration tokenTtl = Duration.ofMinutes(5);
+
+            /**
+             * 结果存储 TTL（不短于业务补偿窗口）
+             */
+            private Duration storeTtl = Duration.ofDays(30);
+
+            /**
+             * JWK 私钥来源配置
+             */
+            private Jwk jwk = new Jwk();
+
+            /**
+             * profile → step-ca 策略映射（仅 framework 治理的 CertificateProfile）
+             */
+            private Map<String, ProfilePolicy> profiles = new java.util.LinkedHashMap<>();
+
+            public String getRootSha256() {
+                return rootSha256;
+            }
+
+            public void setRootSha256(String rootSha256) {
+                this.rootSha256 = rootSha256;
+            }
+
+            public String getTokenProvider() {
+                return tokenProvider;
+            }
+
+            public void setTokenProvider(String tokenProvider) {
+                this.tokenProvider = tokenProvider;
+            }
+
+            public Duration getTokenTtl() {
+                return tokenTtl;
+            }
+
+            public void setTokenTtl(Duration tokenTtl) {
+                this.tokenTtl = tokenTtl;
+            }
+
+            public Duration getStoreTtl() {
+                return storeTtl;
+            }
+
+            public void setStoreTtl(Duration storeTtl) {
+                this.storeTtl = storeTtl;
+            }
+
+            public Jwk getJwk() {
+                return jwk;
+            }
+
+            public void setJwk(Jwk jwk) {
+                this.jwk = jwk;
+            }
+
+            public Map<String, ProfilePolicy> getProfiles() {
+                return profiles;
+            }
+
+            public void setProfiles(Map<String, ProfilePolicy> profiles) {
+                this.profiles = profiles;
+            }
+        }
+
+        /**
+         * JWK 私钥来源配置
+         */
+        public static class Jwk {
+            /**
+             * 只读私钥文件路径（明文 JWK 或 step-ca 口令加密 JWK）
+             */
+            private String privateKeyFile;
+
+            /**
+             * 解密口令文件路径（仅加密 JWK 需要；独立 Secret 注入）
+             */
+            private String passwordFile;
+
+            public String getPrivateKeyFile() {
+                return privateKeyFile;
+            }
+
+            public void setPrivateKeyFile(String privateKeyFile) {
+                this.privateKeyFile = privateKeyFile;
+            }
+
+            public String getPasswordFile() {
+                return passwordFile;
+            }
+
+            public void setPasswordFile(String passwordFile) {
+                this.passwordFile = passwordFile;
+            }
+        }
+
+        /**
+         * profile → step-ca 策略
+         */
+        public static class ProfilePolicy {
+            /**
+             * step-ca provisioner 名
+             */
+            private String provisioner;
+
+            /**
+             * provisioner JWK 的 kid
+             */
+            private String kid;
+
+            /**
+             * 最大签发有效期
+             */
+            private Duration maxValidity;
+
+            /**
+             * 允许的密钥算法（如 EC_P256）
+             */
+            private List<String> allowedKeyAlgorithms = java.util.List.of();
+
+            /**
+             * 要求的扩展密钥用法（如 CLIENT_AUTH）
+             */
+            private List<String> requiredEku = java.util.List.of();
+
+            /**
+             * 主体规则（subject/SAN 前缀约束）
+             */
+            private String subjectRule;
+
+            public String getProvisioner() {
+                return provisioner;
+            }
+
+            public void setProvisioner(String provisioner) {
+                this.provisioner = provisioner;
+            }
+
+            public String getKid() {
+                return kid;
+            }
+
+            public void setKid(String kid) {
+                this.kid = kid;
+            }
+
+            public Duration getMaxValidity() {
+                return maxValidity;
+            }
+
+            public void setMaxValidity(Duration maxValidity) {
+                this.maxValidity = maxValidity;
+            }
+
+            public List<String> getAllowedKeyAlgorithms() {
+                return allowedKeyAlgorithms;
+            }
+
+            public void setAllowedKeyAlgorithms(List<String> allowedKeyAlgorithms) {
+                this.allowedKeyAlgorithms = allowedKeyAlgorithms == null
+                        ? java.util.List.of() : allowedKeyAlgorithms;
+            }
+
+            public List<String> getRequiredEku() {
+                return requiredEku;
+            }
+
+            public void setRequiredEku(List<String> requiredEku) {
+                this.requiredEku = requiredEku == null ? java.util.List.of() : requiredEku;
+            }
+
+            public String getSubjectRule() {
+                return subjectRule;
+            }
+
+            public void setSubjectRule(String subjectRule) {
+                this.subjectRule = subjectRule;
+            }
         }
 
         /**

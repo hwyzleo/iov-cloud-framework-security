@@ -1,6 +1,10 @@
 package net.hwyz.iov.cloud.framework.security.crypto;
 
 import net.hwyz.iov.cloud.framework.security.crypto.client.PkiClient;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertificateChainValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentIdempotencyService;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.InMemoryCertificateEnrollmentResultStore;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateNotReadyException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateProfileNotAllowedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.InvalidCertificateRequestException;
@@ -32,6 +36,7 @@ import java.security.KeyPairGenerator;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
@@ -364,6 +369,158 @@ class DefaultCertEnrollmentTemplateTest {
         InvalidCertificateRequestException ex = assertThrows(
                 InvalidCertificateRequestException.class, () -> template.getCertificate("request-777"));
         assertTrue(ex.getMessage().contains("CSR for the request is unavailable"));
+    }
+
+    // ==================== FW-SEC-DSN-CR-008：幂等冲突 / UNKNOWN / 恢复 ====================
+
+    @Test
+    void apply_shouldThrowConflict_forSameIdempotencyKeyDifferentCsr() {
+        // Given
+        InMemoryCertificateEnrollmentResultStore store =
+                new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
+        EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
+        DefaultCertEnrollmentTemplate template = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store, idempotency,
+                new CertificateChainValidator());
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.CN, "test-service");
+        byte[] csrA = "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----".getBytes();
+        byte[] csrB = "-----BEGIN CERTIFICATE REQUEST-----\nBBBB\n-----END CERTIFICATE REQUEST-----".getBytes();
+        when(pkiClient.submit(any())).thenReturn(
+                new PkiClient.ApplyResponse("request-1", "PENDING", "Submitted"));
+        template.apply(new CertApplyRequest(allowedProfile, csrA, subject, "idem-conflict", Map.of()));
+
+        // When & Then — 同 key 不同 CSR → 冲突，不重复签发
+        assertThrows(CertificateIdempotencyConflictException.class,
+                () -> template.apply(new CertApplyRequest(allowedProfile, csrB, subject, "idem-conflict", Map.of())));
+        verify(pkiClient, times(1)).submit(any());
+    }
+
+    @Test
+    void apply_shouldReturnUnknown_withoutReSigning_whenPreviousOutcomeUnknown() {
+        // Given — 预置 UNKNOWN 记录（如上次请求已发送但响应丢失）
+        InMemoryCertificateEnrollmentResultStore store =
+                new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
+        EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
+        DefaultCertEnrollmentTemplate template = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store, idempotency,
+                new CertificateChainValidator());
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.CN, "test-service");
+        byte[] csr = "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----".getBytes();
+        store.createSubmitting("request-unknown", "default", "idem-unknown",
+                csr, net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentRecord.sha256Hex(csr),
+                allowedProfile.name());
+        store.markUnknown("request-unknown", "response lost");
+
+        // When
+        CertApplyResult result = template.apply(
+                new CertApplyRequest(allowedProfile, csr, subject, "idem-unknown", Map.of()));
+
+        // Then — 返回 UNKNOWN，不重新签发
+        assertEquals(EnrollmentState.UNKNOWN, result.state());
+        assertEquals("request-unknown", result.requestId());
+        verify(pkiClient, never()).submit(any());
+    }
+
+    @Test
+    void applyAndGetCertificate_shouldSurviveRestart_withPersistentStore() throws Exception {
+        // Given — 持久化结果存储 + 首次申请（legacy-rest 路径回写存储）
+        InMemoryCertificateEnrollmentResultStore store =
+                new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
+        EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
+        DefaultCertEnrollmentTemplate template1 = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store, idempotency,
+                new CertificateChainValidator());
+        PkiMaterial material = generatePkiMaterial();
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.CN, "test-service");
+        CertApplyRequest request = new CertApplyRequest(
+                allowedProfile, material.csrPem, subject, "idem-restart", Map.of());
+        when(pkiClient.submit(any())).thenReturn(
+                new PkiClient.ApplyResponse("request-restart", "ISSUED", "Issued"));
+        CertApplyResult applyResult = template1.apply(request);
+        assertEquals("request-restart", applyResult.requestId());
+
+        // When — 模拟应用重启：新模板实例 + 新 mock PKI，但共享同一结果存储
+        DefaultCertEnrollmentTemplate template2 = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store,
+                new EnrollmentIdempotencyService(store), new CertificateChainValidator());
+        when(pkiClient.getStatus("request-restart")).thenReturn(
+                new PkiClient.StatusResponse("request-restart", "ISSUED", "Issued"));
+        when(pkiClient.getCertificate("request-restart")).thenReturn(
+                certificateResponse("request-restart", material.leafCert.getEncoded(), material.chainPem,
+                        material.leafCert.getSerialNumber().toString()));
+
+        // 幂等命中（重启后仍可按原 idempotencyKey 返回原 requestId）
+        CertApplyResult idempotent = template2.apply(request);
+        assertEquals("request-restart", idempotent.requestId());
+
+        // 重启后仍可按 requestId 获取状态与证书（CSR 从存储恢复，公钥一致性校验通过）
+        CertApplyResult status = template2.getStatus("request-restart");
+        assertEquals(EnrollmentState.ISSUED, status.state());
+        IssuedCertificate issued = template2.getCertificate("request-restart");
+        assertArrayEquals(material.leafCert.getEncoded(), issued.leafCertificate());
+        assertEquals(material.leafCert.getSerialNumber().toString(), issued.serialNumber());
+        // 重启后幂等命中不重复 submit
+        verify(pkiClient, times(1)).submit(any());
+    }
+
+    @Test
+    void apply_shouldResign_whenPreviousFailed() {
+        // Given — 预置 FAILED 终态记录（上次失败，未产生证书）
+        InMemoryCertificateEnrollmentResultStore store =
+                new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
+        EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
+        DefaultCertEnrollmentTemplate template = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store, idempotency,
+                new CertificateChainValidator());
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.CN, "test-service");
+        byte[] csr = "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----".getBytes();
+        store.createSubmitting("req-failed-old", "default", "idem-retry",
+                csr, net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentRecord.sha256Hex(csr),
+                allowedProfile.name());
+        store.markTerminal("req-failed-old", net.hwyz.iov.cloud.framework.security.crypto.model.EnrollmentState.FAILED,
+                "temporary failure");
+        when(pkiClient.submit(any())).thenReturn(
+                new PkiClient.ApplyResponse("request-new", "ISSUED", "Issued"));
+
+        // When — 失败可重试：同 key 重新申请
+        CertApplyResult result = template.apply(
+                new CertApplyRequest(allowedProfile, csr, subject, "idem-retry", Map.of()));
+
+        // Then
+        assertEquals("request-new", result.requestId());
+        assertEquals(EnrollmentState.ISSUED, result.state());
+        verify(pkiClient, times(1)).submit(any());
+        // 幂等索引指向新记录；旧 FAILED 记录保留（审计）
+        assertEquals("request-new",
+                store.findByIdempotency("default", "idem-retry").orElseThrow().requestId());
+        assertTrue(store.findByRequestId("req-failed-old").isPresent());
+    }
+
+    @Test
+    void apply_shouldResign_whenPreviousRejected() {
+        // Given — 预置 REJECTED 终态记录（CA 拒绝，未产生证书）
+        InMemoryCertificateEnrollmentResultStore store =
+                new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
+        EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
+        DefaultCertEnrollmentTemplate template = new DefaultCertEnrollmentTemplate(
+                pkiClient, cryptoMetrics, List.of(allowedProfile), store, idempotency,
+                new CertificateChainValidator());
+        SubjectRef subject = new SubjectRef(SubjectRef.SubjectType.CN, "test-service");
+        byte[] csr = "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----".getBytes();
+        store.createSubmitting("req-rejected-old", "default", "idem-rejected",
+                csr, net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentRecord.sha256Hex(csr),
+                allowedProfile.name());
+        store.markTerminal("req-rejected-old",
+                net.hwyz.iov.cloud.framework.security.crypto.model.EnrollmentState.REJECTED, "rejected by CA");
+        when(pkiClient.submit(any())).thenReturn(
+                new PkiClient.ApplyResponse("request-rejected-new", "ISSUED", "Issued"));
+
+        CertApplyResult result = template.apply(
+                new CertApplyRequest(allowedProfile, csr, subject, "idem-rejected", Map.of()));
+
+        assertEquals("request-rejected-new", result.requestId());
+        assertEquals(EnrollmentState.ISSUED, result.state());
+        verify(pkiClient, times(1)).submit(any());
     }
 
     // ==================== 测试工具 ====================

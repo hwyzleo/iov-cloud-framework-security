@@ -17,7 +17,9 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_PROFILE_NOT_ALLOWED,
         CERTIFICATE_APPLICATION_REJECTED,
         CERTIFICATE_NOT_READY,
-        PKI_DEPENDENCY_UNAVAILABLE
+        PKI_DEPENDENCY_UNAVAILABLE,
+        PKI_OUTCOME_UNKNOWN,
+        IDEMPOTENCY_CONFLICT
     }
 
     public CryptoException(Reason reason, String message) {

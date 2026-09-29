@@ -13,7 +13,9 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class CryptoMetrics {
 
+    private final MeterRegistry meterRegistry;
     private final Counter encryptCounter;
+
     private final Counter decryptCounter;
     private final Counter kmsCallCounter;
     private final Counter errorCounter;
@@ -46,6 +48,7 @@ public class CryptoMetrics {
     private final Timer certificateEnrollmentQueryTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
         this.encryptCounter = Counter.builder("crypto.encrypt.count")
                 .description("加密次数")
                 .register(meterRegistry);
@@ -326,5 +329,52 @@ public class CryptoMetrics {
     public void recordCertificateEnrollmentQuery(long duration) {
         certificateEnrollmentQueryCounter.increment();
         certificateEnrollmentQueryTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录 provider 维度证书申请提交（FW-SEC-DSN-CR-008 §8）。
+     * provider 标签仅使用固定枚举（step-ca / legacy-rest），禁止高基数标签。
+     */
+    public void recordEnrollmentSubmit(String provider) {
+        String normalized = normalizeProvider(provider);
+        meterRegistry.counter("crypto.enrollment.submit.count", "provider", normalized).increment();
+    }
+
+    /**
+     * 记录 provider × outcome 维度证书申请结果（FW-SEC-DSN-CR-008 §8）。
+     * outcome 仅使用固定枚举（issued/rejected/failed/unknown/pending）。
+     */
+    public void recordEnrollmentOutcome(String provider, String outcome) {
+        String normalized = normalizeProvider(provider);
+        String normalizedOutcome = normalizeOutcome(outcome);
+        meterRegistry.counter("crypto.enrollment.outcome.count",
+                "provider", normalized, "outcome", normalizedOutcome).increment();
+    }
+
+    private static String normalizeProvider(String provider) {
+        if (provider == null) {
+            return "unknown";
+        }
+        String p = provider.trim().toLowerCase();
+        return switch (p) {
+            case "step-ca" -> "step-ca";
+            case "legacy-rest", "legacy" -> "legacy-rest";
+            default -> "unknown";
+        };
+    }
+
+    private static String normalizeOutcome(String outcome) {
+        if (outcome == null) {
+            return "unknown";
+        }
+        String o = outcome.trim().toLowerCase();
+        return switch (o) {
+            case "issued" -> "issued";
+            case "rejected" -> "rejected";
+            case "failed" -> "failed";
+            case "unknown" -> "unknown";
+            case "pending", "submitting" -> "pending";
+            default -> "unknown";
+        };
     }
 }
