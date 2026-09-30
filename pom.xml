@@ -128,6 +128,9 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <skip>false</skip>
+                    <!-- 契约测试依赖 Docker（step-ca/Redis 容器），CI 默认阶段排除，
+                         需要验证时用 -Dgroups=contract 显式执行（需 agent 具备可用 Docker） -->
+                    <excludedGroups>contract</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>
