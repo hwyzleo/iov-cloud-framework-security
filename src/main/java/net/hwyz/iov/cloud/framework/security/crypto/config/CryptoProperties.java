@@ -638,14 +638,32 @@ public class CryptoProperties {
          */
         public static class Jwk {
             /**
-             * 只读私钥文件路径（明文 JWK 或 step-ca 口令加密 JWK）
+             * 只读私钥文件路径（明文 JWK 或 step-ca 口令加密 JWK）。
+             * <p>
+             * 与 {@code privateKeyContent} 二选一；同时配置时以 {@code privateKeyContent} 优先。
              */
             private String privateKeyFile;
 
             /**
-             * 解密口令文件路径（仅加密 JWK 需要；独立 Secret 注入）
+             * 解密口令文件路径（仅加密 JWK 需要；独立 Secret 注入）。
              */
             private String passwordFile;
+
+            /**
+             * 内联 JWK 内容（明文 JWK 或 step-ca 口令加密 JWK 的 JSON），适合配置中心/Nacos 下发。
+             * <p>
+             * 推荐使用 step-ca 口令加密 JWK（含 {@code encryptedKey}）：密文可安全入 Nacos，
+             * 配一次全服务共享，无需逐个容器挂载文件。
+             */
+            private String privateKeyContent;
+
+            /**
+             * 解密口令（仅加密 JWK 需要）。
+             * <p>
+             * 属于敏感材料：建议以环境变量占位符注入（如 {@code ${STEPCA_PROVISIONER_PASSWORD}}），
+             * 不要在 Nacos 明文保存。
+             */
+            private String password;
 
             public String getPrivateKeyFile() {
                 return privateKeyFile;
@@ -661,6 +679,29 @@ public class CryptoProperties {
 
             public void setPasswordFile(String passwordFile) {
                 this.passwordFile = passwordFile;
+            }
+
+            public String getPrivateKeyContent() {
+                return privateKeyContent;
+            }
+
+            public void setPrivateKeyContent(String privateKeyContent) {
+                this.privateKeyContent = privateKeyContent;
+            }
+
+            public String getPassword() {
+                return password;
+            }
+
+            public void setPassword(String password) {
+                this.password = password;
+            }
+
+            /**
+             * 是否配置了内联 JWK 内容。
+             */
+            public boolean hasInlineContent() {
+                return privateKeyContent != null && !privateKeyContent.isBlank();
             }
         }
 

@@ -45,10 +45,50 @@ public class JwkStepCaTokenProvider implements StepCaTokenProvider {
     private final Duration defaultTtl;
 
     public JwkStepCaTokenProvider(Path privateKeyFile, Path passwordFile, Duration defaultTtl) {
-        this.jwk = loadJwk(Objects.requireNonNull(privateKeyFile, "privateKeyFile must not be null"), passwordFile);
+        this.jwk = loadJwk(readFile(Objects.requireNonNull(privateKeyFile, "privateKeyFile must not be null")),
+                readPassword(passwordFile));
         this.defaultTtl = defaultTtl == null ? Duration.ofMinutes(5) : defaultTtl;
-        log.info("初始化 JwkStepCaTokenProvider: kid={}, kty={}, alg={}",
+        log.info("初始化 JwkStepCaTokenProvider(file): kid={}, kty={}, alg={}",
                 jwk.getKeyID(), jwk.getKeyType(), jwk.getAlgorithm());
+    }
+
+    /**
+     * 基于内容装配（适合配置中心/Nacos 下发）。
+     * <p>
+     * {@code jwkContent} 建议为 step-ca 口令加密 JWK（含 {@code encryptedKey}，密文安全可入 Nacos）；
+     * {@code password} 为解密口令，建议以环境变量占位符注入，勿在 Nacos 明文保存。
+     *
+     * @param jwkContent 明文 JWK 或口令加密 JWK 的 JSON 内容
+     * @param password   解密口令（明文 JWK 时可为 null）
+     * @param defaultTtl 默认 OTT 有效期
+     */
+    public JwkStepCaTokenProvider(String jwkContent, String password, Duration defaultTtl) {
+        if (jwkContent == null || jwkContent.isBlank()) {
+            throw new IllegalStateException("step-ca JWK content must not be blank");
+        }
+        this.jwk = loadJwk(jwkContent.trim(), password == null || password.isBlank() ? null : password.trim());
+        this.defaultTtl = defaultTtl == null ? Duration.ofMinutes(5) : defaultTtl;
+        log.info("初始化 JwkStepCaTokenProvider(content): kid={}, kty={}, alg={}",
+                jwk.getKeyID(), jwk.getKeyType(), jwk.getAlgorithm());
+    }
+
+    private static String readFile(Path privateKeyFile) {
+        try {
+            return Files.readString(privateKeyFile, StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read provisioner JWK file: " + privateKeyFile, e);
+        }
+    }
+
+    private static String readPassword(Path passwordFile) {
+        if (passwordFile == null || !Files.isReadable(passwordFile)) {
+            return null;
+        }
+        try {
+            return Files.readString(passwordFile, StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read provisioner JWK password file: " + passwordFile, e);
+        }
     }
 
     @Override
@@ -88,16 +128,9 @@ public class JwkStepCaTokenProvider implements StepCaTokenProvider {
         }
     }
 
-    private JWK loadJwk(Path privateKeyFile, Path passwordFile) {
-        String json;
-        try {
-            json = Files.readString(privateKeyFile, StandardCharsets.UTF_8).trim();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to read provisioner JWK file: " + privateKeyFile, e);
-        }
-        if (passwordFile != null && Files.isReadable(passwordFile)) {
+    private JWK loadJwk(String json, String password) {
+        if (password != null) {
             try {
-                String password = Files.readString(passwordFile, StandardCharsets.UTF_8).trim();
                 JWK decrypted = decryptEncryptedJwk(json, password);
                 log.info("解密 step-ca 加密 provisioner JWK 成功");
                 return decrypted;
@@ -108,7 +141,7 @@ public class JwkStepCaTokenProvider implements StepCaTokenProvider {
         try {
             return JWK.parse(json);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse provisioner JWK: " + privateKeyFile, e);
+            throw new IllegalStateException("Failed to parse provisioner JWK", e);
         }
     }
 

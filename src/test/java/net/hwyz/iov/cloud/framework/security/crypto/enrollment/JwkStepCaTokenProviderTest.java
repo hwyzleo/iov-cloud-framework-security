@@ -155,4 +155,47 @@ class JwkStepCaTokenProviderTest {
         assertThrows(IllegalStateException.class,
                 () -> new JwkStepCaTokenProvider(file, null, Duration.ofMinutes(5)));
     }
+
+    @Test
+    void contentConstructor_shouldSignWithPlaintextJwkContent() throws Exception {
+        // 内联明文 JWK 内容（配置中心/Nacos 下发场景）
+        ECKey jwk = generateJwk();
+        JwkStepCaTokenProvider provider =
+                new JwkStepCaTokenProvider(jwk.toJSONString(), null, Duration.ofMinutes(5));
+
+        SignedJWT jwt = SignedJWT.parse(provider.createToken(request("req-content")));
+        assertTrue(jwt.verify(new com.nimbusds.jose.crypto.ECDSAVerifier(jwk.toECPublicKey())));
+        assertTrue(jwt.getJWTClaimsSet().getJWTID().startsWith("req-content-"));
+    }
+
+    @Test
+    void contentConstructor_shouldDecryptEncryptedJwkContent() throws Exception {
+        // 内联口令加密 JWK 内容（密文入 Nacos，口令走环境变量）
+        ECKey jwk = generateJwk();
+        String password = "provisioner-secret";
+
+        com.nimbusds.jose.JWEObject jwe = new com.nimbusds.jose.JWEObject(
+                new com.nimbusds.jose.JWEHeader(
+                        com.nimbusds.jose.JWEAlgorithm.PBES2_HS256_A128KW,
+                        com.nimbusds.jose.EncryptionMethod.A128CBC_HS256),
+                new com.nimbusds.jose.Payload(jwk.toJSONString()));
+        jwe.encrypt(new com.nimbusds.jose.crypto.PasswordBasedEncrypter(password, 16, 1000));
+        String[] parts = jwe.serialize().split("\\.");
+        String json = "{\"protected\":\"" + parts[0] + "\",\"encrypted_key\":\"" + parts[1]
+                + "\",\"iv\":\"" + parts[2]
+                + "\",\"ciphertext\":\"" + parts[3] + "\",\"tag\":\"" + parts[4] + "\"}";
+
+        JwkStepCaTokenProvider provider =
+                new JwkStepCaTokenProvider(json, password, Duration.ofMinutes(5));
+
+        SignedJWT jwt = SignedJWT.parse(provider.createToken(request("req-enc-content")));
+        assertTrue(jwt.verify(new com.nimbusds.jose.crypto.ECDSAVerifier(jwk.toECPublicKey())));
+        assertTrue(jwt.getJWTClaimsSet().getJWTID().startsWith("req-enc-content-"));
+    }
+
+    @Test
+    void contentConstructor_shouldFail_whenContentBlank() {
+        assertThrows(IllegalStateException.class,
+                () -> new JwkStepCaTokenProvider("  ", null, Duration.ofMinutes(5)));
+    }
 }

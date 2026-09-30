@@ -316,14 +316,28 @@ public class CryptoAutoConfiguration {
             throw new IllegalStateException("Unsupported step-ca token-provider: " + stepCa.getTokenProvider()
                     + " (only 'jwk' is currently supported)");
         }
-        Path privateKeyFile = Path.of(stepCa.getJwk().getPrivateKeyFile());
+        CryptoProperties.Pki.Jwk jwk = stepCa.getJwk();
+
+        // 优先内联内容（适合配置中心/Nacos 下发；口令建议用环境变量占位符注入）
+        if (jwk.hasInlineContent()) {
+            log.info("step-ca JWK provisioner 使用内联内容装配（配置中心下发）");
+            return new JwkStepCaTokenProvider(jwk.getPrivateKeyContent(), jwk.getPassword(), stepCa.getTokenTtl());
+        }
+
+        // 回退到只读 Secret 文件
+        if (jwk.getPrivateKeyFile() == null || jwk.getPrivateKeyFile().isBlank()) {
+            throw new IllegalStateException(
+                    "step-ca JWK provisioner requires either crypto.pki.step-ca.jwk.private-key-content "
+                            + "or private-key-file");
+        }
+        Path privateKeyFile = Path.of(jwk.getPrivateKeyFile());
         if (!Files.isReadable(privateKeyFile)) {
             throw new IllegalStateException(
                     "step-ca JWK private key file is not readable: " + privateKeyFile
                             + " (must be mounted read-only Secret)");
         }
-        Path passwordFile = stepCa.getJwk().getPasswordFile() != null
-                ? Path.of(stepCa.getJwk().getPasswordFile()) : null;
+        Path passwordFile = jwk.getPasswordFile() != null
+                ? Path.of(jwk.getPasswordFile()) : null;
         if (passwordFile != null && !Files.isReadable(passwordFile)) {
             throw new IllegalStateException("step-ca JWK password file is not readable: " + passwordFile);
         }
