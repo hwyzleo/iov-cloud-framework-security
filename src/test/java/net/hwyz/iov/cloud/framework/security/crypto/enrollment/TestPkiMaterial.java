@@ -85,6 +85,51 @@ public final class TestPkiMaterial {
         return generate(true, "TBOX-00000000000000000000000000000001");
     }
 
+    /**
+     * 生成叶子证书携带 URI 类型 SAN（如 {@code urn:ecu-uid:<uid>}）的完整材料，
+     * 用于 subject-rule 前缀校验测试。
+     */
+    public static Pki generateWithUriSan(String uriSan) throws Exception {
+        KeyPair rootKeyPair = generateKeyPair();
+        X509Certificate rootCert = issueSelfSigned(ROOT_SUBJECT, rootKeyPair, BigInteger.valueOf(1));
+
+        KeyPair intermediateKeyPair = generateKeyPair();
+        X509Certificate intermediateCert = issueCa(ROOT_SUBJECT, rootKeyPair,
+                INTERMEDIATE_SUBJECT, intermediateKeyPair.getPublic(), BigInteger.valueOf(2));
+
+        KeyPair leafKeyPair = generateKeyPair();
+        X509Certificate leafCert = issueLeafWithUriSan(INTERMEDIATE_SUBJECT, intermediateKeyPair,
+                LEAF_SUBJECT, leafKeyPair.getPublic(), BigInteger.valueOf(3), uriSan);
+
+        JcaPKCS10CertificationRequestBuilder csrBuilder =
+                new JcaPKCS10CertificationRequestBuilder(LEAF_SUBJECT, leafKeyPair.getPublic());
+        PKCS10CertificationRequest csr = csrBuilder.build(
+                new JcaContentSignerBuilder("SHA256withECDSA").build(leafKeyPair.getPrivate()));
+        byte[] csrPem = pem("CERTIFICATE REQUEST", csr.getEncoded()).getBytes();
+
+        byte[] chainPem = (pem("CERTIFICATE", intermediateCert.getEncoded())
+                + pem("CERTIFICATE", rootCert.getEncoded())).getBytes();
+
+        return new Pki(rootKeyPair, rootCert, intermediateKeyPair, intermediateCert,
+                leafKeyPair, leafCert, csrPem, chainPem);
+    }
+
+    public static X509Certificate issueLeafWithUriSan(X500Name issuer, KeyPair issuerKeyPair,
+                                                      X500Name subject, PublicKey publicKey, BigInteger serial,
+                                                      String uriSan) throws Exception {
+        Date notBefore = Date.from(Instant.now().minusSeconds(3600));
+        Date notAfter = Date.from(Instant.now().plusSeconds(365L * 24 * 3600));
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                issuer, serial, notBefore, notAfter, subject, publicKey);
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        builder.addExtension(Extension.extendedKeyUsage, false,
+                new ExtendedKeyUsage(KeyPurposeId.id_kp_clientAuth));
+        builder.addExtension(Extension.subjectAlternativeName, false,
+                new GeneralNames(new GeneralName(GeneralName.uniformResourceIdentifier, uriSan)));
+        return toCertificate(builder.build(
+                new JcaContentSignerBuilder("SHA256withECDSA").build(issuerKeyPair.getPrivate())));
+    }
+
     public static KeyPair generateKeyPair() throws Exception {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
         kpg.initialize(new ECGenParameterSpec("secp256r1"));

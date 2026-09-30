@@ -118,13 +118,19 @@ public class StepCaPkiClient implements PkiClient {
         StepCaApiClient.StepCaSignResponse signResponse = null;
         try {
             policy = policyRegistry.resolve(command.profileName());
+            // OTT 授权 SAN 取自 CSR（step-ca 要求 OTT 覆盖 CSR 的 SAN，否则 403）；
+            // CSR 无 SAN 扩展时回退到 subject，兼容仅用 CN 的历史 CSR。
+            List<String> sans = CsrSanExtractor.extractSans(command.csr());
+            if (sans.isEmpty()) {
+                sans = List.of(command.subject());
+            }
             String ott = tokenProvider.createToken(new StepCaTokenRequest(
                     requestId,
                     policy.provisioner(),
                     policy.kid(),
                     signUri,
                     command.subject(),
-                    List.of(command.subject()),
+                    sans,
                     rootSha256,
                     null,
                     java.util.Map.of()));

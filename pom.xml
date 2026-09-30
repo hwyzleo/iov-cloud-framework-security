@@ -102,12 +102,11 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- 测试：生成真实 CSR / CA / 证书链材料（证书签发一致性校验测试用，不随制品发布） -->
+        <!-- 运行时：解析 PKCS#10 CSR 的 SAN（step-ca OTT 授权）与测试生成 CSR/CA/证书链材料 -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
             <version>1.73</version>
-            <scope>test</scope>
         </dependency>
     </dependencies>
 

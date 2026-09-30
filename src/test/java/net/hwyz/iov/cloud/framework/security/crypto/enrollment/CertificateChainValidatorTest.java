@@ -171,6 +171,44 @@ class CertificateChainValidatorTest {
     }
 
     @Test
+    void validateIssued_shouldPass_whenSubjectRuleMatchesUriSanPrefix() throws Exception {
+        // 叶子携带 URI SAN urn:ecu-uid:<uid>，subject-rule 以该 URN 前缀约束
+        TestPkiMaterial.Pki uriMaterial = TestPkiMaterial.generateWithUriSan(
+                "urn:ecu-uid:00000000000000000000000000000001");
+        StepCaProfilePolicy urnRule = new StepCaProfilePolicy(
+                "TBOX_TSP_CLIENT", "openiov", "kid-1", Duration.ofDays(365),
+                List.of("EC_P256"), List.of("CLIENT_AUTH"), "urn:ecu-uid:");
+        List<byte[]> chain = List.of(
+                uriMaterial.intermediateCert().getEncoded(),
+                uriMaterial.rootCert().getEncoded());
+
+        // 不抛异常即通过（URI SAN 前缀命中 subject-rule）
+        validator.validateIssued(uriMaterial.leafCert().getEncoded(), chain,
+                uriMaterial.csrPem(), urnRule,
+                EnrollmentRecord.fingerprintHex(uriMaterial.rootCert().getEncoded()));
+    }
+
+    @Test
+    void validateIssued_shouldFail_whenUriSanViolatesSubjectRule() throws Exception {
+        // 叶子 URI SAN 命名空间不符（urn:vin:...），被 urn:ecu-uid: 规则拒绝
+        TestPkiMaterial.Pki uriMaterial = TestPkiMaterial.generateWithUriSan(
+                "urn:vin:LVGBE40K0PA000001");
+        StepCaProfilePolicy urnRule = new StepCaProfilePolicy(
+                "TBOX_TSP_CLIENT", "openiov", "kid-1", Duration.ofDays(365),
+                List.of("EC_P256"), List.of("CLIENT_AUTH"), "urn:ecu-uid:");
+        List<byte[]> chain = List.of(
+                uriMaterial.intermediateCert().getEncoded(),
+                uriMaterial.rootCert().getEncoded());
+
+        InvalidCertificateRequestException ex = assertThrows(
+                InvalidCertificateRequestException.class,
+                () -> validator.validateIssued(uriMaterial.leafCert().getEncoded(), chain,
+                        uriMaterial.csrPem(), urnRule,
+                        EnrollmentRecord.fingerprintHex(uriMaterial.rootCert().getEncoded())));
+        assertTrue(ex.getMessage().contains("subject rule"));
+    }
+
+    @Test
     void validateIssued_shouldFail_whenKeyAlgorithmNotAllowed() throws Exception {
         StepCaProfilePolicy rsaOnly = new StepCaProfilePolicy(
                 "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
