@@ -378,6 +378,14 @@ public class CryptoProperties {
          */
         private Retry retry = new Retry();
 
+        /**
+         * PKI HTTPS 传输层信任配置（legacy-rest provider 的 Feign 客户端使用）。
+         * <p>
+         * 配置后，PKI Feign 客户端仅信任此处提供的根/CA 证书（受控 truststore，禁 trust-all），
+         * 不再依赖 JVM 全局 cacerts；未配置时退回 JDK 默认信任（行为不变）。
+         */
+        private Tls tls = new Tls();
+
         public String getEndpoint() {
             return endpoint;
         }
@@ -440,6 +448,88 @@ public class CryptoProperties {
 
         public void setRetry(Retry retry) {
             this.retry = retry;
+        }
+
+        public Tls getTls() {
+            return tls;
+        }
+
+        public void setTls(Tls tls) {
+            this.tls = tls;
+        }
+
+        /**
+         * PKI HTTPS 传输层信任配置。
+         * <p>
+         * 两种来源（同时配置时以 {@code trustStoreFile} 优先）：
+         * <ul>
+         *   <li>{@code trustedCertsPem}：内联 PEM（可含多张证书的 bundle），适合配置中心下发，
+         *       无需 keytool、无需挂载文件；</li>
+         *   <li>{@code trustStoreFile}：JKS/PKCS12 truststore 文件路径（配合口令与类型）。</li>
+         * </ul>
+         * 均未配置时退回 JDK 默认信任（行为不变）。
+         */
+        public static class Tls {
+            /**
+             * 受信根/CA 证书 PEM（可含多张，PEM bundle）。
+             */
+            private String trustedCertsPem;
+
+            /**
+             * truststore 文件路径（JKS/PKCS12）。
+             */
+            private String trustStoreFile;
+
+            /**
+             * truststore 口令。
+             */
+            private String trustStorePassword;
+
+            /**
+             * truststore 类型（JKS / PKCS12），默认 PKCS12。
+             */
+            private String trustStoreType = "PKCS12";
+
+            public String getTrustedCertsPem() {
+                return trustedCertsPem;
+            }
+
+            public void setTrustedCertsPem(String trustedCertsPem) {
+                this.trustedCertsPem = trustedCertsPem;
+            }
+
+            public String getTrustStoreFile() {
+                return trustStoreFile;
+            }
+
+            public void setTrustStoreFile(String trustStoreFile) {
+                this.trustStoreFile = trustStoreFile;
+            }
+
+            public String getTrustStorePassword() {
+                return trustStorePassword;
+            }
+
+            public void setTrustStorePassword(String trustStorePassword) {
+                this.trustStorePassword = trustStorePassword;
+            }
+
+            public String getTrustStoreType() {
+                return trustStoreType;
+            }
+
+            public void setTrustStoreType(String trustStoreType) {
+                this.trustStoreType = trustStoreType == null || trustStoreType.isBlank()
+                        ? "PKCS12" : trustStoreType;
+            }
+
+            /**
+             * 是否配置了任一信任来源。
+             */
+            public boolean isConfigured() {
+                return (trustedCertsPem != null && !trustedCertsPem.isBlank())
+                        || (trustStoreFile != null && !trustStoreFile.isBlank());
+            }
         }
 
         /**
