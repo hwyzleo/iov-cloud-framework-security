@@ -58,6 +58,11 @@ public class CryptoProperties {
     private KeyProv keyProv = new KeyProv();
 
     /**
+     * 运行期业务密钥材料与目录配置（FW-SEC-DSN-CR-009）
+     */
+    private BusinessKey businessKey = new BusinessKey();
+
+    /**
      * 非对称签名/验签门面配置（CR-006）
      */
     private Signing signing = new Signing();
@@ -129,6 +134,14 @@ public class CryptoProperties {
 
     public void setKeyProv(KeyProv keyProv) {
         this.keyProv = keyProv;
+    }
+
+    public BusinessKey getBusinessKey() {
+        return businessKey;
+    }
+
+    public void setBusinessKey(BusinessKey businessKey) {
+        this.businessKey = businessKey;
     }
 
     public Signing getSigning() {
@@ -302,7 +315,8 @@ public class CryptoProperties {
      */
     public static class KeyProv {
         /**
-         * 是否启用 DataKeyDistributionTemplate 门面装配
+         * 是否启用 DataKeyDistributionTemplate 门面装配（CR-005；FW-SEC-DSN-CR-009 起仅作 deprecated 兼容开关，
+         * 新代码使用 crypto.business-key.enabled）
          */
         private boolean enabled = false;
 
@@ -312,6 +326,68 @@ public class CryptoProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * 运行期业务密钥材料与目录配置（FW-SEC-DSN-CR-009 §10）
+     */
+    public static class BusinessKey {
+        /**
+         * 是否装配 BusinessKeyMaterialTemplate 材料门面（纯 VMD 编排开启）
+         */
+        private boolean enabled = false;
+
+        /**
+         * 运行期封装（RUNTIME）解封所用的 KMS 命名密钥引用（运行时边界包裹密钥）
+         */
+        private String runtimeKeyName = "runtime";
+
+        /**
+         * 业务目录 Resolver Adapter 配置（业务加解密服务开启）
+         */
+        private Directory directory = new Directory();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getRuntimeKeyName() {
+            return runtimeKeyName;
+        }
+
+        public void setRuntimeKeyName(String runtimeKeyName) {
+            this.runtimeKeyName = runtimeKeyName;
+        }
+
+        public Directory getDirectory() {
+            return directory;
+        }
+
+        public void setDirectory(Directory directory) {
+            this.directory = directory;
+        }
+
+        /**
+         * 业务目录 Resolver Adapter 配置
+         */
+        public static class Directory {
+            /**
+             * 是否装配 BusinessKeyDirectoryResolver（Resolver Adapter；由消费服务接入 VMD Service API）
+             */
+            private boolean enabled = false;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
         }
     }
 

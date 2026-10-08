@@ -16,6 +16,7 @@ public class CachedDataKey implements Serializable {
     private transient byte[] dekPlaintext;
     private BizType bizType;
     private String deviceSn;
+    private String purpose;
     private Instant expireAt;
 
     public CachedDataKey() {
@@ -61,6 +62,14 @@ public class CachedDataKey implements Serializable {
         this.deviceSn = deviceSn;
     }
 
+    public String getPurpose() {
+        return purpose;
+    }
+
+    public void setPurpose(String purpose) {
+        this.purpose = purpose;
+    }
+
     public Instant getExpireAt() {
         return expireAt;
     }
@@ -79,12 +88,13 @@ public class CachedDataKey implements Serializable {
                 && Arrays.equals(dekPlaintext, that.dekPlaintext)
                 && java.util.Objects.equals(bizType, that.bizType)
                 && java.util.Objects.equals(deviceSn, that.deviceSn)
+                && java.util.Objects.equals(purpose, that.purpose)
                 && java.util.Objects.equals(expireAt, that.expireAt);
     }
 
     @Override
     public int hashCode() {
-        int result = java.util.Objects.hash(keyId, keyVersion, bizType, deviceSn, expireAt);
+        int result = java.util.Objects.hash(keyId, keyVersion, bizType, deviceSn, purpose, expireAt);
         result = 31 * result + Arrays.hashCode(dekPlaintext);
         return result;
     }
@@ -93,6 +103,6 @@ public class CachedDataKey implements Serializable {
     public String toString() {
         return "CachedDataKey{keyId='" + keyId + "', keyVersion=" + keyVersion
                 + ", bizType=" + bizType + ", deviceSn='" + deviceSn
-                + "', expireAt=" + expireAt + "}";
+                + "', purpose='" + purpose + "', expireAt=" + expireAt + "}";
     }
 }

@@ -8,6 +8,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnvelopeHeader;
+import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyDescriptor;
+import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.CryptoKeyState;
+import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.KeyOperation;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +26,8 @@ class DefaultCryptoTemplateSessionTest {
     private EnvelopeCodec envelopeCodec;
     private CryptoMetrics cryptoMetrics;
     private KmsClient kmsClient;
+    private BusinessKeyDirectoryResolver directoryResolver;
+    private BusinessKeyMaterialTemplate materialTemplate;
     private DefaultCryptoTemplate template;
 
     @BeforeEach
@@ -33,8 +38,10 @@ class DefaultCryptoTemplateSessionTest {
         envelopeCodec = new EnvelopeCodec();
         cryptoMetrics = mock(CryptoMetrics.class);
         kmsClient = mock(KmsClient.class);
+        directoryResolver = mock(BusinessKeyDirectoryResolver.class);
+        materialTemplate = mock(BusinessKeyMaterialTemplate.class);
         template = new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher,
-                envelopeCodec, cryptoMetrics, kmsClient);
+                envelopeCodec, cryptoMetrics, kmsClient, directoryResolver, materialTemplate);
     }
 
     @Test
@@ -76,12 +83,18 @@ class DefaultCryptoTemplateSessionTest {
         byte[] ciphertext = aeadCipher.encrypt(plaintext, dek, iv, aad);
         byte[] payload = envelopeCodec.encode(header, ciphertext);
 
+        // 旧 ENVELOPE 密文反向寻址：先经目录 Resolver 授权，再按显式 keyRef 取钥
+        BusinessKeyDescriptor descriptor = new BusinessKeyDescriptor(
+                "old-key", 1, "kms-old-key", CryptoKeyState.ACTIVE, null, null, null);
+        when(directoryResolver.resolveByKeyId("old-key", KeyOperation.DECRYPT)).thenReturn(descriptor);
+
         net.hwyz.iov.cloud.framework.security.crypto.model.CachedDataKey dataKey =
                 new net.hwyz.iov.cloud.framework.security.crypto.model.CachedDataKey();
         dataKey.setKeyId("old-key");
         dataKey.setKeyVersion(1);
         dataKey.setDekPlaintext(dek);
-        when(keyCache.get("old-key", 1)).thenReturn(dataKey);
+        when(keyCache.get(eq(descriptor), isNull(), isNull(), isNull(), eq(materialTemplate)))
+                .thenReturn(dataKey);
 
         byte[] result = template.decrypt(payload);
         assertArrayEquals(plaintext, result);

@@ -1,17 +1,22 @@
 package net.hwyz.iov.cloud.framework.security.crypto.config;
 
+import net.hwyz.iov.cloud.framework.security.crypto.BusinessKeyDirectoryResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.BusinessKeyMaterialTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.CertEncryptionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.CertEnrollmentTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.CryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DataKeyDistributionTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultBusinessKeyMaterialTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEncryptionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEnrollmentTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultSigningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultVmdBusinessKeyDirectoryResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.VmdBusinessKeyDirectoryClient;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
@@ -118,9 +123,46 @@ public class CryptoAutoConfiguration {
     @ConditionalOnProperty(prefix = "crypto", name = "envelope-enabled", havingValue = "true", matchIfMissing = true)
     public CryptoTemplate cryptoTemplate(DeviceResolver deviceResolver, KeyCache keyCache,
                                          AeadCipher aeadCipher, EnvelopeCodec envelopeCodec,
-                                         CryptoMetrics cryptoMetrics, KmsClient kmsClient) {
+                                         CryptoMetrics cryptoMetrics, KmsClient kmsClient,
+                                         ObjectProvider<BusinessKeyDirectoryResolver> directoryResolverProvider,
+                                         ObjectProvider<BusinessKeyMaterialTemplate> materialTemplateProvider) {
         return new DefaultCryptoTemplate(deviceResolver, keyCache, aeadCipher, envelopeCodec,
-                cryptoMetrics, kmsClient);
+                cryptoMetrics, kmsClient,
+                directoryResolverProvider.getIfAvailable(),
+                materialTemplateProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.business-key", name = "enabled", havingValue = "true")
+    public BusinessKeyMaterialTemplate businessKeyMaterialTemplate(KmsClient kmsClient,
+                                                                   CryptoMetrics cryptoMetrics,
+                                                                   CryptoProperties properties) {
+        return new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties);
+    }
+
+    /**
+     * 业务密钥目录 Resolver Adapter（FW-SEC-DSN-CR-009 §4/§10）。
+     * <p>
+     * 受 {@code crypto.business-key.directory.enabled} 控制；委托消费服务提供的
+     * {@link VmdBusinessKeyDirectoryClient}（Feign 接入 VMD Service API，不内置 VMD 数据表）。
+     * 目录不可用时 CryptoTemplate 正反向寻址 fail-closed，不得直连 KMS 降级（RD-009-6）。
+     */
+    @Bean
+    @ConditionalOnMissingBean(BusinessKeyDirectoryResolver.class)
+    @ConditionalOnProperty(prefix = "crypto.business-key.directory", name = "enabled", havingValue = "true")
+    public BusinessKeyDirectoryResolver businessKeyDirectoryResolver(
+            ObjectProvider<VmdBusinessKeyDirectoryClient> clientProvider,
+            CryptoMetrics cryptoMetrics) {
+        VmdBusinessKeyDirectoryClient client = clientProvider.getIfAvailable();
+        if (client == null) {
+            throw new IllegalStateException(
+                    "crypto.business-key.directory.enabled=true 需要消费服务提供 VmdBusinessKeyDirectoryClient"
+                            + "（Feign 接入 VMD Service API）。framework 只定义 SPI 与 Feign Adapter 扩展点，"
+                            + "不内置 VMD 数据表（FW-SEC-DSN-CR-009 §4）。");
+        }
+        log.info("业务密钥目录 Resolver Adapter 装配完成: client={}", client.getClass().getSimpleName());
+        return new DefaultVmdBusinessKeyDirectoryResolver(client, cryptoMetrics);
     }
 
     @Bean

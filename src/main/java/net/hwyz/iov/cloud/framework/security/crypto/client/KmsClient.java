@@ -10,12 +10,58 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 public interface KmsClient {
 
     /**
+     * 创建业务密钥材料（FW-SEC-DSN-CR-009 §9）。
+     * <p>
+     * 仅创建材料，不决定业务 ACTIVE（由 VMD 目录权威决定）。
+     * 结果未知（请求已发送但无法确认）时抛
+     * {@link net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException}；
+     * 幂等冲突抛 {@link net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException}。
+     *
+     * @param command 创建命令
+     * @return 创建的材料
+     */
+    KmsKeyMaterial createDataKey(KmsCreateKeyCommand command);
+
+    /**
+     * 按显式 keyRef 向显式收方封装（FW-SEC-DSN-CR-009 §9）。
+     * <p>
+     * 无隐式收方推断；DEVICE_ROOT_KEK 仅在显式可信 wrappingKeyRef 下可用。
+     *
+     * @param keyRef    显式密钥引用
+     * @param recipient 显式收方
+     * @return 瞬时封装结果
+     */
+    KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient);
+
+    /**
+     * 查询显式 keyRef 的材料元数据（FW-SEC-DSN-CR-009 §9）。
+     *
+     * @param keyRef 显式密钥引用
+     * @return 材料元数据（含密码学状态）
+     */
+    KmsKeyMetadata getKeyMetadata(KmsKeyReference keyRef);
+
+    /**
+     * 按显式 keyRef 吊销（幂等，FW-SEC-DSN-CR-009 §9）。
+     *
+     * @param keyRef         显式密钥引用
+     * @param reason         吊销原因
+     * @param idempotencyKey 幂等键
+     * @return 吊销结果（密码学状态）
+     */
+    KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey);
+
+    /**
      * 获取活跃数据密钥
      *
      * @param keyName 密钥名称
      * @param bizType 业务类型
      * @return 包装密钥
+     * @deprecated 由 FW-SEC-DSN-CR-009 取代：framework 不再按 deviceSn+BizType 直接选活跃 key；
+     * 请经 {@link net.hwyz.iov.cloud.framework.security.crypto.BusinessKeyDirectoryResolver} 寻址 + 
+     * {@link net.hwyz.iov.cloud.framework.security.crypto.BusinessKeyMaterialTemplate} 材料门面。
      */
+    @Deprecated
     WrappedKey getActiveDataKey(String keyName, BizType bizType);
 
     /**
@@ -73,7 +119,10 @@ public interface KmsClient {
      * @param bizType   业务类型（须 supportsData==true）
      * @param certSerial 收方设备证书序列号
      * @return 设备公钥封装的活跃数据密钥
+     * @deprecated 由 FW-SEC-DSN-CR-009 取代：内部按 deviceSn+BizType 选活跃 key 的口径不再保留，
+     * 兼容层必须委托 {@link net.hwyz.iov.cloud.framework.security.crypto.BusinessKeyDirectoryResolver}。
      */
+    @Deprecated
     WrappedDataKey wrapActiveDataKeyForDevice(String keyName, String deviceSn, BizType bizType, String certSerial);
 
     /**

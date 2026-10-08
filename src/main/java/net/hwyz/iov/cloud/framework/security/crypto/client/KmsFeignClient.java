@@ -46,4 +46,18 @@ public interface KmsFeignClient {
 
     @PostMapping("/v1/transit/keys/{keyName}")
     FeignKmsClient.PublicKeyResponse getPublicKey(@PathVariable("keyName") String keyName, @RequestBody FeignKmsClient.PublicKeyRequest request);
+
+    // ==================== 业务密钥材料（FW-SEC-DSN-CR-009 §9） ====================
+
+    @PostMapping("/v1/transit/business-key/create")
+    FeignKmsClient.CreateBusinessKeyResponse createBusinessKey(@RequestBody FeignKmsClient.CreateBusinessKeyRequest request);
+
+    @PostMapping("/v1/transit/business-key/wrap")
+    FeignKmsClient.WrapBusinessKeyResponse wrapBusinessKey(@RequestBody FeignKmsClient.WrapBusinessKeyRequest request);
+
+    @PostMapping("/v1/transit/business-key/metadata")
+    FeignKmsClient.BusinessKeyMetadataResponse getBusinessKeyMetadata(@RequestBody FeignKmsClient.BusinessKeyMetadataRequest request);
+
+    @PostMapping("/v1/transit/business-key/revoke")
+    FeignKmsClient.RevokeBusinessKeyResponse revokeBusinessKey(@RequestBody FeignKmsClient.RevokeBusinessKeyRequest request);
 }

@@ -31,6 +31,11 @@ public class CryptoMetrics {
     private final Counter certencWrapKeyCounter;
     private final Counter certificateEnrollmentCounter;
     private final Counter certificateEnrollmentQueryCounter;
+    private final Counter businessKeyCreateCounter;
+    private final Counter businessKeyWrapCounter;
+    private final Counter businessKeyMetadataCounter;
+    private final Counter businessKeyRevokeCounter;
+    private final Counter businessKeyDirectoryCounter;
     private final Timer encryptTimer;
     private final Timer decryptTimer;
     private final Timer kmsCallTimer;
@@ -46,6 +51,11 @@ public class CryptoMetrics {
     private final Timer certencWrapKeyTimer;
     private final Timer certificateEnrollmentTimer;
     private final Timer certificateEnrollmentQueryTimer;
+    private final Timer businessKeyCreateTimer;
+    private final Timer businessKeyWrapTimer;
+    private final Timer businessKeyMetadataTimer;
+    private final Timer businessKeyRevokeTimer;
+    private final Timer businessKeyDirectoryTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -113,6 +123,26 @@ public class CryptoMetrics {
                 .description("证书申请查询次数")
                 .register(meterRegistry);
 
+        this.businessKeyCreateCounter = Counter.builder("crypto.business-key.create.count")
+                .description("业务密钥材料创建次数")
+                .register(meterRegistry);
+
+        this.businessKeyWrapCounter = Counter.builder("crypto.business-key.wrap.count")
+                .description("业务密钥封装次数")
+                .register(meterRegistry);
+
+        this.businessKeyMetadataCounter = Counter.builder("crypto.business-key.metadata.count")
+                .description("业务密钥元数据查询次数")
+                .register(meterRegistry);
+
+        this.businessKeyRevokeCounter = Counter.builder("crypto.business-key.revoke.count")
+                .description("业务密钥吊销次数")
+                .register(meterRegistry);
+
+        this.businessKeyDirectoryCounter = Counter.builder("crypto.business-key.directory.count")
+                .description("业务密钥目录解析次数")
+                .register(meterRegistry);
+
         this.encryptTimer = Timer.builder("crypto.encrypt.duration")
                 .description("加密时延")
                 .register(meterRegistry);
@@ -171,6 +201,26 @@ public class CryptoMetrics {
 
         this.certificateEnrollmentQueryTimer = Timer.builder("crypto.enrollment.query.duration")
                 .description("证书申请查询时延")
+                .register(meterRegistry);
+
+        this.businessKeyCreateTimer = Timer.builder("crypto.business-key.create.duration")
+                .description("业务密钥材料创建时延")
+                .register(meterRegistry);
+
+        this.businessKeyWrapTimer = Timer.builder("crypto.business-key.wrap.duration")
+                .description("业务密钥封装时延")
+                .register(meterRegistry);
+
+        this.businessKeyMetadataTimer = Timer.builder("crypto.business-key.metadata.duration")
+                .description("业务密钥元数据查询时延")
+                .register(meterRegistry);
+
+        this.businessKeyRevokeTimer = Timer.builder("crypto.business-key.revoke.duration")
+                .description("业务密钥吊销时延")
+                .register(meterRegistry);
+
+        this.businessKeyDirectoryTimer = Timer.builder("crypto.business-key.directory.duration")
+                .description("业务密钥目录解析时延")
                 .register(meterRegistry);
     }
 
@@ -338,6 +388,56 @@ public class CryptoMetrics {
     public void recordEnrollmentSubmit(String provider) {
         String normalized = normalizeProvider(provider);
         meterRegistry.counter("crypto.enrollment.submit.count", "provider", normalized).increment();
+    }
+
+    /**
+     * 记录业务密钥材料创建（FW-SEC-DSN-CR-009）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyCreate(long duration) {
+        businessKeyCreateCounter.increment();
+        businessKeyCreateTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录业务密钥封装（FW-SEC-DSN-CR-009）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyWrap(long duration) {
+        businessKeyWrapCounter.increment();
+        businessKeyWrapTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录业务密钥元数据查询（FW-SEC-DSN-CR-009）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyMetadata(long duration) {
+        businessKeyMetadataCounter.increment();
+        businessKeyMetadataTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录业务密钥吊销（FW-SEC-DSN-CR-009）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyRevoke(long duration) {
+        businessKeyRevokeCounter.increment();
+        businessKeyRevokeTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录业务密钥目录解析（FW-SEC-DSN-CR-009）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyDirectory(long duration) {
+        businessKeyDirectoryCounter.increment();
+        businessKeyDirectoryTimer.record(duration, TimeUnit.MILLISECONDS);
     }
 
     /**

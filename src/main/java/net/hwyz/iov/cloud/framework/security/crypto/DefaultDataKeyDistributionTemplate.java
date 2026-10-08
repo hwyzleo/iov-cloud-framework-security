@@ -21,7 +21,11 @@ import java.util.Objects;
  * 否则 fail-closed。
  * <p>
  * 幂等：同 {@code (device_sn, 业务域, 用途)} 有效期内返回同一活跃 keyId（由 KMS 侧保证）。
+ *
+ * @deprecated 被 FW-SEC-DSN-CR-009 取代：内部按 deviceSn+BizType 选活跃 key 的设计不再保留（RD-009-7）；
+ * 兼容层必须委托 {@link BusinessKeyDirectoryResolver}。新代码使用 {@link BusinessKeyMaterialTemplate}。
  */
+@Deprecated
 public class DefaultDataKeyDistributionTemplate implements DataKeyDistributionTemplate {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDataKeyDistributionTemplate.class);

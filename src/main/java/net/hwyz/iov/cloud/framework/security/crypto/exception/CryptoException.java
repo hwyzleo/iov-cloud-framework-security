@@ -19,7 +19,14 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_NOT_READY,
         PKI_DEPENDENCY_UNAVAILABLE,
         PKI_OUTCOME_UNKNOWN,
-        IDEMPOTENCY_CONFLICT
+        IDEMPOTENCY_CONFLICT,
+        BUSINESS_KEY_NOT_FOUND,
+        BUSINESS_KEY_STATE_NOT_ALLOWED,
+        BUSINESS_KEY_DIRECTORY_UNAVAILABLE,
+        BUSINESS_KEY_IDEMPOTENCY_CONFLICT,
+        BUSINESS_KEY_WRAP_FAILED,
+        BUSINESS_KEY_REVOCATION_FAILED,
+        CRYPTO_OPERATION_OUTCOME_UNKNOWN
     }
 
     public CryptoException(Reason reason, String message) {

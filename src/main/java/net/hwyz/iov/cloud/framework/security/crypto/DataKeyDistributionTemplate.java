@@ -13,7 +13,13 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
  * <p>
  * 取 {@code (device_sn, 业务域)} 活跃 DATA 密钥、用收方设备公钥/证书封装下发；密钥明文不出 KMS。
  * 同 {@code (device_sn, 业务域, 用途)} 有效期内幂等返回同一活跃 keyId。
+ *
+ * @deprecated 被 FW-SEC-DSN-CR-009 取代：内部按 deviceSn+BizType 选择活跃 key 的口径不再保留；
+ * 如保留兼容层，必须委托 {@link BusinessKeyDirectoryResolver}（RD-009-7）。新代码使用
+ * {@link BusinessKeyMaterialTemplate}（create/wrap/getMetadata/revoke，显式 keyRef）+
+ * {@link BusinessKeyDirectoryResolver}（VMD 目录寻址）。
  */
+@Deprecated
 public interface DataKeyDistributionTemplate {
 
     /**
@@ -23,6 +29,8 @@ public interface DataKeyDistributionTemplate {
      * @param bizType       业务类型（须 supportsData==true）
      * @param recipient     收方设备（certSerial）
      * @return 设备公钥封装的活跃数据密钥
+     * @deprecated 被 FW-SEC-DSN-CR-009 取代，见类型 javadoc。
      */
+    @Deprecated
     WrappedDataKey issueActiveKeyForDevice(String deviceSnOrVin, BizType bizType, DeviceRecipient recipient);
 }
