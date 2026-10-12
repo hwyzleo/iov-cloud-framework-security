@@ -43,6 +43,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaTokenProvid
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CertificateProfile;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.revocation.CertificateStatusChecker;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultCertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
@@ -255,7 +256,8 @@ public class CryptoAutoConfiguration {
                                      EnrollmentIdempotencyService idempotencyService,
                                      CertificateChainValidator chainValidator,
                                      CryptoMetrics cryptoMetrics,
-                                     Environment environment) {
+                                     Environment environment,
+                                     ObjectProvider<CertificateStatusChecker> certificateStatusCheckerProvider) {
         CryptoProperties.Pki pki = properties.getPki();
         CryptoProperties.Pki.StepCa stepCa = pki.getStepCa();
 
@@ -286,7 +288,8 @@ public class CryptoAutoConfiguration {
 
         PkiClient client = new StepCaPkiClient(
                 apiClient, tokenProvider, registry, resultStore, chainValidator,
-                idempotencyService, cryptoMetrics, endpoint, stepCa.getRootSha256());
+                idempotencyService, cryptoMetrics, endpoint, stepCa.getRootSha256(),
+                certificateStatusCheckerProvider.getIfAvailable());
 
         log.info("step-ca 证书注册装配完成: provider=step-ca, endpoint={}, rootFingerprint=...{}, "
                         + "resultStore={}, profiles={}",
@@ -304,10 +307,12 @@ public class CryptoAutoConfiguration {
     @ConditionalOnMissingBean(PkiClient.class)
     @ConditionalOnProperty(prefix = "crypto.pki", name = "endpoint")
     @ConditionalOnExpression("'${crypto.pki.provider:legacy-rest}' == 'legacy-rest'")
-    public PkiClient legacyRestPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient) {
+    public PkiClient legacyRestPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient,
+                                         ObjectProvider<CertificateStatusChecker> certificateStatusCheckerProvider) {
         CryptoProperties.Pki pki = properties.getPki();
         log.info("legacy-rest 证书注册装配完成: endpoint={}", pki.getEndpoint());
-        return new LegacyRestPkiClient(properties, pkiFeignClient);
+        return new LegacyRestPkiClient(properties, pkiFeignClient,
+                certificateStatusCheckerProvider.getIfAvailable());
     }
 
     @Bean

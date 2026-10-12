@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.PkiDependencyUnavailableException;
+import net.hwyz.iov.cloud.framework.security.crypto.revocation.CertificateStatusChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,10 +23,25 @@ public class LegacyRestPkiClient implements PkiClient {
 
     private final CryptoProperties properties;
     private final PkiFeignClient pkiFeignClient;
+    private final CertificateStatusChecker certificateStatusChecker;
 
     public LegacyRestPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient) {
+        this(properties, pkiFeignClient, null);
+    }
+
+    public LegacyRestPkiClient(CryptoProperties properties, PkiFeignClient pkiFeignClient,
+                               CertificateStatusChecker certificateStatusChecker) {
         this.properties = properties;
         this.pkiFeignClient = pkiFeignClient;
+        this.certificateStatusChecker = certificateStatusChecker;
+    }
+
+    @Override
+    public CertificateStatusResult checkCertificateStatus(CertificateStatusQuery query) {
+        if (certificateStatusChecker == null) {
+            return PkiClient.super.checkCertificateStatus(query);
+        }
+        return certificateStatusChecker.check(query);
     }
 
     @Override

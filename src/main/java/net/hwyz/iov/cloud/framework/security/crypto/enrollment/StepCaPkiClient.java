@@ -9,6 +9,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.PkiOutcomeUnknownE
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnrollmentState;
 import net.hwyz.iov.cloud.framework.security.crypto.model.IssuedCertificate;
+import net.hwyz.iov.cloud.framework.security.crypto.revocation.CertificateStatusChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,6 +49,7 @@ public class StepCaPkiClient implements PkiClient {
     private final CryptoMetrics metrics;
     private final URI signUri;
     private final String rootSha256;
+    private final CertificateStatusChecker certificateStatusChecker;
 
     public StepCaPkiClient(StepCaApiClient apiClient,
                            StepCaTokenProvider tokenProvider,
@@ -58,6 +60,20 @@ public class StepCaPkiClient implements PkiClient {
                            CryptoMetrics metrics,
                            URI endpoint,
                            String rootSha256) {
+        this(apiClient, tokenProvider, policyRegistry, resultStore, chainValidator, idempotencyService,
+                metrics, endpoint, rootSha256, null);
+    }
+
+    public StepCaPkiClient(StepCaApiClient apiClient,
+                           StepCaTokenProvider tokenProvider,
+                           StepCaProfilePolicyRegistry policyRegistry,
+                           CertificateEnrollmentResultStore resultStore,
+                           CertificateChainValidator chainValidator,
+                           EnrollmentIdempotencyService idempotencyService,
+                           CryptoMetrics metrics,
+                           URI endpoint,
+                           String rootSha256,
+                           CertificateStatusChecker certificateStatusChecker) {
         this.apiClient = Objects.requireNonNull(apiClient, "apiClient must not be null");
         this.tokenProvider = Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
         this.policyRegistry = Objects.requireNonNull(policyRegistry, "policyRegistry must not be null");
@@ -67,6 +83,15 @@ public class StepCaPkiClient implements PkiClient {
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.signUri = URI.create(Objects.requireNonNull(endpoint, "endpoint must not be null").toString() + "/1.0/sign");
         this.rootSha256 = Objects.requireNonNull(rootSha256, "rootSha256 must not be null");
+        this.certificateStatusChecker = certificateStatusChecker;
+    }
+
+    @Override
+    public CertificateStatusResult checkCertificateStatus(CertificateStatusQuery query) {
+        if (certificateStatusChecker == null) {
+            return PkiClient.super.checkCertificateStatus(query);
+        }
+        return certificateStatusChecker.check(query);
     }
 
     @Override

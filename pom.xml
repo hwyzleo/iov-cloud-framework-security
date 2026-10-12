@@ -42,6 +42,23 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <!--
+              spring-security-rsa 传递引入旧版 bcpkix-jdk15on（1.69），与 bcpkix-jdk18on（1.73，
+              OCSP/CRL 解析所需）在 classpath 冲突；排除旧版，统一使用 jdk18on。
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcpkix-jdk15on</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- 运行时：解析 PKCS#10 CSR 的 SAN（step-ca OTT 授权）、OCSP/CRL，以及测试生成 CA/证书链材料 -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.73</version>
         </dependency>
 
         <!-- Spring Web -->
@@ -81,6 +98,13 @@
             <artifactId>micrometer-core</artifactId>
         </dependency>
 
+        <!-- Actuator：PKI 证书状态能力 Health（optional，不引入则不暴露 Health，其余能力不受影响） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- JOSE/JWT：step-ca JWK provisioner 一次性令牌（OTT）签名（FW-SEC-DSN-CR-008） -->
         <dependency>
             <groupId>com.nimbusds</groupId>
@@ -100,13 +124,6 @@
             <artifactId>junit-jupiter</artifactId>
             <version>1.19.8</version>
             <scope>test</scope>
-        </dependency>
-
-        <!-- 运行时：解析 PKCS#10 CSR 的 SAN（step-ca OTT 授权）与测试生成 CSR/CA/证书链材料 -->
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>1.73</version>
         </dependency>
     </dependencies>
 
