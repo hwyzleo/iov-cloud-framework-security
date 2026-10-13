@@ -47,7 +47,8 @@ class OcspCertificateStatusCheckerTest {
     }
 
     private CertificateStatusContext context() {
-        return new CertificateStatusContext(material.leafCert(), material.issuerCert(), OCSP_URI, null, "legacy-rest");
+        return new CertificateStatusContext(material.leafCert(), material.issuerCert(), "revocation-leaf",
+                OCSP_URI, null, "legacy-rest");
     }
 
     private Date in(long seconds) {
@@ -208,7 +209,7 @@ class OcspCertificateStatusCheckerTest {
 
     @Test
     void http503_retriesOnceWithinBudget_thenDependencyUnavailable() {
-        properties.getRetry().setMaxAttempts(1);
+        properties.getRetry().setMaxAttempts(2);
         transport.onPost(body -> StubRevocationTransport.status(503));
 
         assertThatThrownBy(() -> checker.check(context(), decisionAt, decisionAt.plusSeconds(2)))
@@ -260,7 +261,7 @@ class OcspCertificateStatusCheckerTest {
 
     @Test
     void connectFailure_retriesOnceWithinBudget() {
-        properties.getRetry().setMaxAttempts(1);
+        properties.getRetry().setMaxAttempts(2);
         transport.onPost(body -> {
             throw StubRevocationTransport.transportError(RevocationTransportException.Phase.CONNECT);
         });
@@ -286,7 +287,7 @@ class OcspCertificateStatusCheckerTest {
     @Test
     void noOcspEndpoint_throwsConfiguration() {
         CertificateStatusContext noOcsp = new CertificateStatusContext(
-                material.leafCert(), material.issuerCert(), null, null, "legacy-rest");
+                material.leafCert(), material.issuerCert(), "revocation-leaf", null, null, "legacy-rest");
 
         assertThatThrownBy(() -> checker.check(noOcsp, decisionAt, decisionAt.plusSeconds(1)))
                 .isInstanceOf(CertificateStatusConfigurationException.class);

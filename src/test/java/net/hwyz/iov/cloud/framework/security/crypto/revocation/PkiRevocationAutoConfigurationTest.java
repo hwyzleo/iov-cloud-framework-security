@@ -37,7 +37,7 @@ class PkiRevocationAutoConfigurationTest {
 
             PkiClient client = context.getBean(PkiClient.class);
             assertThatThrownBy(() -> client.checkCertificateStatus(
-                    new PkiClient.CertificateStatusQuery("01", null, null, null)))
+                    new PkiClient.CertificateStatusQuery("01", null, null)))
                     .isInstanceOf(CertificateStatusConfigurationException.class);
         });
     }

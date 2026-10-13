@@ -40,8 +40,8 @@ class CertificateDirectoryResolverTest {
 
     private PkiClient.CertificateStatusQuery query(byte[] leaf, String fingerprint) {
         return new PkiClient.CertificateStatusQuery(
-                material.leafCert().getSerialNumber().toString(16), fingerprint, leaf,
-                Instant.parse("2026-10-12T00:00:00Z"));
+                leaf, material.leafCert().getSerialNumber().toString(16), fingerprint,
+                Instant.now());
     }
 
     @Test
@@ -52,6 +52,7 @@ class CertificateDirectoryResolverTest {
 
         assertThat(context.leafCertificate()).isEqualTo(material.leafCert());
         assertThat(context.issuerCertificate()).isEqualTo(material.issuerCert());
+        assertThat(context.subjectCommonName()).isEqualTo("revocation-leaf");
         assertThat(context.ocspUri()).hasToString(OCSP_URL);
         assertThat(context.crlUri()).hasToString(CRL_URL);
         assertThat(context.provider()).isEqualTo("legacy-rest");
@@ -93,7 +94,7 @@ class CertificateDirectoryResolverTest {
     void serialMismatch_throwsProtocol() throws Exception {
         properties.setIssuerCertPem(new String(material.issuerPem()));
         PkiClient.CertificateStatusQuery wrong = new PkiClient.CertificateStatusQuery(
-                "ff", null, material.leafDer(), Instant.now());
+                material.leafDer(), "ff", null, Instant.now());
 
         assertThatThrownBy(() -> resolver(null).resolve(wrong))
                 .isInstanceOf(CertificateStatusProtocolException.class)
@@ -104,6 +105,29 @@ class CertificateDirectoryResolverTest {
     void unparseableLeaf_throwsProtocol() {
         assertThatThrownBy(() -> resolver(null).resolve(query(new byte[]{1, 2, 3}, null)))
                 .isInstanceOf(CertificateStatusProtocolException.class);
+    }
+
+    @Test
+    void decisionBeforeNotBefore_throwsProtocol() throws Exception {
+        properties.setIssuerCertPem(new String(material.issuerPem()));
+        PkiClient.CertificateStatusQuery notYetValid = new PkiClient.CertificateStatusQuery(
+                material.leafDer(), material.leafCert().getSerialNumber().toString(16), null,
+                Instant.EPOCH);
+
+        assertThatThrownBy(() -> resolver(null).resolve(notYetValid))
+                .isInstanceOf(CertificateStatusProtocolException.class)
+                .hasMessageContaining("valid at the decision time");
+    }
+
+    @Test
+    void caCertificateAsLeaf_throwsProtocol() throws Exception {
+        PkiClient.CertificateStatusQuery caLeaf = new PkiClient.CertificateStatusQuery(
+                material.rootCert().getEncoded(),
+                material.rootCert().getSerialNumber().toString(16), null, Instant.now());
+
+        assertThatThrownBy(() -> resolver(null).resolve(caLeaf))
+                .isInstanceOf(CertificateStatusProtocolException.class)
+                .hasMessageContaining("end-entity");
     }
 
     @Test
@@ -127,7 +151,7 @@ class CertificateDirectoryResolverTest {
         properties.setIssuerCertPem(new String(material.issuerPem()));
 
         CertificateStatusContext context = resolver(directory).resolve(new PkiClient.CertificateStatusQuery(
-                material.leafCert().getSerialNumber().toString(16), null, null, Instant.now()));
+                material.leafCert().getSerialNumber().toString(16), null, Instant.now()));
 
         assertThat(context.leafCertificate()).isEqualTo(material.leafCert());
         assertThat(context.ocspUri()).hasToString(OCSP_URL);
@@ -158,7 +182,7 @@ class CertificateDirectoryResolverTest {
         };
 
         assertThatThrownBy(() -> resolver(noDirectory).resolve(new PkiClient.CertificateStatusQuery(
-                "1234567890abcdef", null, null, Instant.now())))
+                "1234567890abcdef", null, Instant.now())))
                 .isInstanceOf(CertificateStatusConfigurationException.class)
                 .hasMessageContaining("leafCertificateDer");
     }

@@ -97,7 +97,7 @@ public class OcspCertificateStatusChecker implements RevocationProtocolChecker {
         if (body == null || body.length == 0) {
             throw new CertificateStatusProtocolException("OCSP responder returned an empty body");
         }
-        return parseResponse(body, issuer, leaf, decisionAt, nonce, noncePolicy);
+        return parseResponse(body, issuer, leaf, context.subjectCommonName(), decisionAt, nonce, noncePolicy);
     }
 
     private byte[] buildRequest(X509Certificate issuer, java.math.BigInteger serial, byte[] nonce) {
@@ -124,6 +124,7 @@ public class OcspCertificateStatusChecker implements RevocationProtocolChecker {
     private PkiClient.CertificateStatusResult parseResponse(byte[] body,
                                                            X509Certificate issuer,
                                                            X509Certificate leaf,
+                                                           String subjectCommonName,
                                                            Instant decisionAt,
                                                            byte[] nonce,
                                                            String noncePolicy) {
@@ -162,7 +163,7 @@ public class OcspCertificateStatusChecker implements RevocationProtocolChecker {
         PkiClient.RevocationState state = mapCertificateStatus(single.getCertStatus());
 
         log.debug("OCSP 查询完成: outcome={}, thisUpdate={}, nextUpdate={}", state, thisUpdate, nextUpdate);
-        return new PkiClient.CertificateStatusResult(state,
+        return new PkiClient.CertificateStatusResult(state, subjectCommonName,
                 leaf.getNotBefore().toInstant(), leaf.getNotAfter().toInstant(),
                 thisUpdate, nextUpdate, PkiClient.RevocationSource.OCSP, Instant.now());
     }

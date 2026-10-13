@@ -82,9 +82,14 @@ public interface PkiClient {
      * <p>
      * 启用时由 provider 实现（legacy-rest / step-ca）委托 framework 的证书状态检查器执行：
      * 标准 OCSP 优先、CRL 受控后备，统一 TLS/超时/重试/类型化异常。
+     * <p>
+     * framework 解析调用方携带/Provider 解析到的<b>实际叶子证书</b>并校验 DER、serial、
+     * fingerprint、issuer/证书链、有效期与用途，返回 {@code subjectCommonName} 与
+     * GOOD/REVOKED/UNKNOWN 等证书事实；不接收 uid/VIN/deviceSn，也不判断 CN 与业务 UID 是否一致，
+     * 该业务身份比较归消费方（FW-SEC-DSN-CR-010 §13）。
      *
-     * @param query 证书状态查询（serial 必填，可选指纹与调用方携带的叶子证书 DER）
-     * @return 统一状态结果（GOOD/REVOKED/UNKNOWN）
+     * @param query 证书状态查询（以实际叶子证书为首选输入，期望 serial/指纹作为一致性约束）
+     * @return 统一状态结果（含 Subject CN，GOOD/REVOKED/UNKNOWN）
      */
     default CertificateStatusResult checkCertificateStatus(CertificateStatusQuery query) {
         throw new CertificateStatusConfigurationException(
@@ -131,33 +136,39 @@ public interface PkiClient {
     }
 
     /**
-     * 证书状态查询输入（FW-SEC-DSN-CR-010 §2，按决策 RD-010-7 扩展叶子证书）。
+     * 证书状态查询输入（FW-SEC-DSN-CR-010 §13.1，决策 RD-010-7）。
+     * <p>
+     * 以本次实际用于 mTLS 的叶子证书（{@code leafCertificateDer}）为首选输入，
+     * {@code expectedSerial}/{@code expectedSha256Fingerprint} 仅作为一致性约束。
+     * 不接收 uid、VIN、deviceSn 或 HSM 等业务身份字段。
      *
-     * @param serial            证书序列号（必填，十六进制，自动规范化为 provider canonical form）
-     * @param sha256Fingerprint 可选 SHA-256 指纹（存在时必须与已解析证书一致）
-     * @param leafCertificateDer 可选：调用方本次实际用于 mTLS 的叶子证书（DER）。
-     *                           step-ca 等无 serial 目录查询能力的 Provider 必须提供。
-     *                           framework 不持久化、不写日志。
-     * @param decisionAt        裁决时刻（缺省为调用时刻）
+     * @param leafCertificateDer        本次实际用于 mTLS 的叶子证书（DER）。
+     *                                  step-ca 等无 serial 目录查询能力的 Provider 必须提供；
+     *                                  framework 不持久化、不写日志。
+     * @param expectedSerial            期望序列号（必填，十六进制，自动规范化为 provider canonical form），
+     *                                  必须与叶子证书解析结果一致
+     * @param expectedSha256Fingerprint 可选期望 SHA-256 指纹（存在时必须与叶子证书一致）
+     * @param decisionAt                裁决时刻（缺省为调用时刻）
      */
     record CertificateStatusQuery(
-            String serial,
-            String sha256Fingerprint,
             byte[] leafCertificateDer,
+            String expectedSerial,
+            String expectedSha256Fingerprint,
             Instant decisionAt) {
 
         public CertificateStatusQuery {
-            serial = canonicalSerial(serial);
-            sha256Fingerprint = normalizeFingerprint(sha256Fingerprint);
             leafCertificateDer = leafCertificateDer == null ? null : leafCertificateDer.clone();
+            expectedSerial = canonicalSerial(expectedSerial);
+            expectedSha256Fingerprint = normalizeFingerprint(expectedSha256Fingerprint);
             decisionAt = decisionAt == null ? Instant.now() : decisionAt;
         }
 
         /**
-         * 便捷构造：不携带叶子证书。
+         * 便捷构造：不携带叶子证书，仅当 Provider 具备已定义的 serial 目录查询能力（如 legacy-rest）时可用。
          */
-        public CertificateStatusQuery(String serial, String sha256Fingerprint, Instant decisionAt) {
-            this(serial, sha256Fingerprint, null, decisionAt);
+        public CertificateStatusQuery(String expectedSerial, String expectedSha256Fingerprint,
+                                      Instant decisionAt) {
+            this(null, expectedSerial, expectedSha256Fingerprint, decisionAt);
         }
 
         /**
@@ -170,18 +181,24 @@ public interface PkiClient {
     }
 
     /**
-     * 证书状态查询结果（FW-SEC-DSN-CR-010 §2）。
+     * 证书状态查询结果（FW-SEC-DSN-CR-010 §13.1）。
+     * <p>
+     * 只返回证书事实与状态来源，不替消费方决定 ALLOW/DENY；消费方负责比较
+     * {@code subjectCommonName} 与自身业务身份（如 uid）。
      *
-     * @param revocationState 吊销状态（GOOD/REVOKED/UNKNOWN）；UNKNOWN 不得映射为 GOOD
-     * @param notBefore       证书有效期开始
-     * @param notAfter        证书有效期结束（供业务方冗余兜底）
-     * @param thisUpdate      状态响应 thisUpdate
-     * @param nextUpdate      状态响应 nextUpdate（可能为空）
-     * @param source          来源（OCSP/CRL）
-     * @param checkedAt       framework 检查完成时刻
+     * @param revocationState   吊销状态（GOOD/REVOKED/UNKNOWN）；UNKNOWN 不得映射为 GOOD
+     * @param subjectCommonName framework 从叶子证书解析的 Subject CN（可能为空）；
+     *                          framework 不判断其与业务 UID 是否一致
+     * @param notBefore         证书有效期开始
+     * @param notAfter          证书有效期结束（供业务方冗余兜底）
+     * @param thisUpdate        状态响应 thisUpdate
+     * @param nextUpdate        状态响应 nextUpdate（可能为空）
+     * @param source            来源（OCSP/CRL）
+     * @param checkedAt         framework 检查完成时刻
      */
     record CertificateStatusResult(
             RevocationState revocationState,
+            String subjectCommonName,
             Instant notBefore,
             Instant notAfter,
             Instant thisUpdate,

@@ -92,7 +92,7 @@ public class CrlCertificateStatusChecker implements RevocationProtocolChecker {
         }
 
         log.debug("CRL 查询完成: outcome={}, thisUpdate={}, nextUpdate={}", state, thisUpdate, nextUpdate);
-        return new PkiClient.CertificateStatusResult(state,
+        return new PkiClient.CertificateStatusResult(state, context.subjectCommonName(),
                 leaf.getNotBefore().toInstant(), leaf.getNotAfter().toInstant(),
                 thisUpdate, nextUpdate, PkiClient.RevocationSource.CRL, Instant.now());
     }

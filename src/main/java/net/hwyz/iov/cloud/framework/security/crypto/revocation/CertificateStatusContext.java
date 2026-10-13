@@ -13,6 +13,7 @@ import java.security.cert.X509Certificate;
  *
  * @param leafCertificate   叶子证书（framework 内部使用，不持久化、不写日志）
  * @param issuerCertificate 叶子签发者证书
+ * @param subjectCommonName framework 从叶子证书解析出的 Subject CN（可能为空）
  * @param ocspUri           OCSP responder 端点（可为空，表示无可用 AIA/覆盖）
  * @param crlUri            CRL 分发点（可为空）
  * @param provider          签发 Provider（step-ca / legacy-rest），仅用于指标 label
@@ -20,6 +21,7 @@ import java.security.cert.X509Certificate;
 public record CertificateStatusContext(
         X509Certificate leafCertificate,
         X509Certificate issuerCertificate,
+        String subjectCommonName,
         URI ocspUri,
         URI crlUri,
         String provider) {

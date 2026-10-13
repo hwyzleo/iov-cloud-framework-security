@@ -154,7 +154,7 @@ class PkiRevocationContractTest {
 
     private PkiClient.CertificateStatusQuery query() throws Exception {
         return new PkiClient.CertificateStatusQuery(
-                material.leafCert().getSerialNumber().toString(16), null, material.leafDer(), Instant.now());
+                material.leafDer(), material.leafCert().getSerialNumber().toString(16), null, Instant.now());
     }
 
     private HttpsServer startServer(KeyPair keyPair, X509Certificate certificate) throws Exception {

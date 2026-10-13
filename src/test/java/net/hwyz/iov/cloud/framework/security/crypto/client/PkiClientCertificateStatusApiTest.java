@@ -32,10 +32,10 @@ class PkiClientCertificateStatusApiTest {
     void query_normalizesSerialAndFingerprintDefaultsDecisionAtAndClonesLeaf() {
         byte[] leaf = {1, 2, 3};
         PkiClient.CertificateStatusQuery query = new PkiClient.CertificateStatusQuery(
-                "0xAB:CD", "AA:BB:CC", leaf, null);
+                leaf, "0xAB:CD", "AA:BB:CC", null);
 
-        assertThat(query.serial()).isEqualTo("abcd");
-        assertThat(query.sha256Fingerprint()).isEqualTo("aabbcc");
+        assertThat(query.expectedSerial()).isEqualTo("abcd");
+        assertThat(query.expectedSha256Fingerprint()).isEqualTo("aabbcc");
         assertThat(query.decisionAt()).isNotNull();
 
         leaf[0] = 9;
@@ -48,16 +48,27 @@ class PkiClientCertificateStatusApiTest {
     @Test
     void query_fingerprintBlank_isNormalizedToNull() {
         PkiClient.CertificateStatusQuery query = new PkiClient.CertificateStatusQuery(
-                "01", "  ", null, Instant.parse("2026-10-12T00:00:00Z"));
-        assertThat(query.sha256Fingerprint()).isNull();
+                "01", "  ", Instant.parse("2026-10-12T00:00:00Z"));
+        assertThat(query.expectedSha256Fingerprint()).isNull();
         assertThat(query.leafCertificateDer()).isNull();
+    }
+
+    @Test
+    void result_carriesSubjectCommonNameForConsumerIdentityCheck() {
+        Instant now = Instant.parse("2026-10-12T00:00:00Z");
+        PkiClient.CertificateStatusResult result = new PkiClient.CertificateStatusResult(
+                PkiClient.RevocationState.GOOD, "revocation-leaf",
+                now.minusSeconds(60), now.plusSeconds(3600), now.minusSeconds(30), now.plusSeconds(600),
+                PkiClient.RevocationSource.OCSP, now);
+
+        assertThat(result.subjectCommonName()).isEqualTo("revocation-leaf");
     }
 
     @Test
     void defaultClient_disabled_throwsConfigurationDisabled_notGood() {
         DefaultPkiClient client = new DefaultPkiClient();
         assertThatThrownBy(() -> client.checkCertificateStatus(
-                new PkiClient.CertificateStatusQuery("01", null, null, null)))
+                new PkiClient.CertificateStatusQuery("01", null, null)))
                 .isInstanceOf(CertificateStatusConfigurationException.class)
                 .hasMessageContaining("disabled");
     }

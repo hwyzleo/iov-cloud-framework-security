@@ -57,7 +57,7 @@ class DefaultCertificateStatusCheckerTest {
 
     private PkiClient.CertificateStatusQuery query() throws Exception {
         return new PkiClient.CertificateStatusQuery(
-                material.leafCert().getSerialNumber().toString(16), null, material.leafDer(), Instant.now());
+                material.leafDer(), material.leafCert().getSerialNumber().toString(16), null, Instant.now());
     }
 
     private void ocspResponds(org.bouncycastle.cert.ocsp.CertificateStatus status) {
@@ -85,6 +85,7 @@ class DefaultCertificateStatusCheckerTest {
         PkiClient.CertificateStatusResult result = checker.check(query());
 
         assertThat(result.revocationState()).isEqualTo(PkiClient.RevocationState.GOOD);
+        assertThat(result.subjectCommonName()).isEqualTo("revocation-leaf");
         assertThat(result.source()).isEqualTo(PkiClient.RevocationSource.OCSP);
         assertThat(transport.getCount).isZero();
     }
@@ -189,7 +190,7 @@ class DefaultCertificateStatusCheckerTest {
         TestRevocationMaterial.Material noEndpoints = TestRevocationMaterial.generate(null, null);
         properties.setIssuerCertPem(new String(noEndpoints.issuerPem()));
         PkiClient.CertificateStatusQuery query = new PkiClient.CertificateStatusQuery(
-                noEndpoints.leafCert().getSerialNumber().toString(16), null, noEndpoints.leafDer(), Instant.now());
+                noEndpoints.leafDer(), noEndpoints.leafCert().getSerialNumber().toString(16), null, Instant.now());
 
         assertThatThrownBy(() -> checker.check(query))
                 .isInstanceOf(CertificateStatusConfigurationException.class)
@@ -201,7 +202,7 @@ class DefaultCertificateStatusCheckerTest {
         TestRevocationMaterial.Material noAia = TestRevocationMaterial.generate(null, CRL_URL);
         properties.setIssuerCertPem(new String(noAia.issuerPem()));
         PkiClient.CertificateStatusQuery query = new PkiClient.CertificateStatusQuery(
-                noAia.leafCert().getSerialNumber().toString(16), null, noAia.leafDer(), Instant.now());
+                noAia.leafDer(), noAia.leafCert().getSerialNumber().toString(16), null, Instant.now());
         transport.onGet(uri -> StubRevocationTransport.ok(compute(() ->
                 TestRevocationMaterial.crl(noAia, noAia.leafCert().getSerialNumber(),
                         new Date(System.currentTimeMillis() - 60_000),
@@ -218,7 +219,7 @@ class DefaultCertificateStatusCheckerTest {
         TestRevocationMaterial.Material noCdp = TestRevocationMaterial.generate(OCSP_URL, null);
         properties.setIssuerCertPem(new String(noCdp.issuerPem()));
         PkiClient.CertificateStatusQuery query = new PkiClient.CertificateStatusQuery(
-                noCdp.leafCert().getSerialNumber().toString(16), null, noCdp.leafDer(), Instant.now());
+                noCdp.leafDer(), noCdp.leafCert().getSerialNumber().toString(16), null, Instant.now());
         transport.onPost(body -> {
             throw StubRevocationTransport.transportError(RevocationTransportException.Phase.CONNECT);
         });

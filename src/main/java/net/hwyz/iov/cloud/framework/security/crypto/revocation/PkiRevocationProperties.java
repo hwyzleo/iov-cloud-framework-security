@@ -188,9 +188,10 @@ public class PkiRevocationProperties {
      */
     public static class Retry {
         /**
-         * 最多额外尝试次数（默认 1）
+         * 总尝试次数（含首次调用，TSP-DSN-CR-011 §7 / FW-SEC-DSN-CR-010 §6）：
+         * 1 表示不重试，2 表示最多重试一次。
          */
-        private int maxAttempts = 1;
+        private int maxAttempts = 2;
 
         /**
          * 基础退避时间

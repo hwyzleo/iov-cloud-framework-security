@@ -44,7 +44,8 @@ class CrlCertificateStatusCheckerTest {
     }
 
     private CertificateStatusContext context() {
-        return new CertificateStatusContext(material.leafCert(), material.issuerCert(), null, CRL_URI, "legacy-rest");
+        return new CertificateStatusContext(material.leafCert(), material.issuerCert(), "revocation-leaf",
+                null, CRL_URI, "legacy-rest");
     }
 
     private Date in(long seconds) {
@@ -121,7 +122,7 @@ class CrlCertificateStatusCheckerTest {
 
     @Test
     void http503_retriesOnceWithinBudget_thenDependencyUnavailable() {
-        properties.getRetry().setMaxAttempts(1);
+        properties.getRetry().setMaxAttempts(2);
         transport.onGet(uri -> StubRevocationTransport.status(503));
 
         assertThatThrownBy(() -> checker.check(context(), decisionAt, decisionAt.plusSeconds(2)))
@@ -132,7 +133,7 @@ class CrlCertificateStatusCheckerTest {
     @Test
     void noCrlEndpoint_throwsConfiguration() {
         CertificateStatusContext noCrl = new CertificateStatusContext(
-                material.leafCert(), material.issuerCert(), null, null, "legacy-rest");
+                material.leafCert(), material.issuerCert(), "revocation-leaf", null, null, "legacy-rest");
 
         assertThatThrownBy(() -> checker.check(noCrl, decisionAt, decisionAt.plusSeconds(1)))
                 .isInstanceOf(CertificateStatusConfigurationException.class);

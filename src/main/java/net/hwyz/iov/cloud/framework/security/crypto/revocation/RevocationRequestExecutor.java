@@ -48,7 +48,8 @@ class RevocationRequestExecutor {
      */
     RevocationHttpTransport.Response execute(Function<Duration, RevocationHttpTransport.Response> call,
                                              Instant deadline) {
-        int maxAttempts = Math.max(0, properties.getRetry().getMaxAttempts());
+        // TSP-DSN-CR-011 §7：maxAttempts 为「含首次的总尝试次数」；1=不重试、2=最多重试一次。
+        int maxAttempts = Math.max(1, properties.getRetry().getMaxAttempts());
         int attempt = 0;
         while (true) {
             Duration timeout = effectiveTimeout(deadline);
@@ -129,7 +130,8 @@ class RevocationRequestExecutor {
     }
 
     private boolean canRetry(int attempt, int maxAttempts, Instant deadline) {
-        if (attempt >= maxAttempts) {
+        // attempt 为已完成的额外尝试次数；仅当 remaining attempts 仍大于 0 时允许重试。
+        if (attempt + 1 >= maxAttempts) {
             return false;
         }
         Duration remaining = Duration.between(Instant.now(), deadline);

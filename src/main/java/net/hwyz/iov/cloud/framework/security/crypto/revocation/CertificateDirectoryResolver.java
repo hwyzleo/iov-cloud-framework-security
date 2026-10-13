@@ -5,6 +5,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertPem;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateStatusConfigurationException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateStatusProtocolException;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x500.style.IETFUtils;
 import org.bouncycastle.asn1.x509.AccessDescription;
 import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.CRLDistPoint;
@@ -13,6 +16,7 @@ import org.bouncycastle.asn1.x509.DistributionPointName;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +24,7 @@ import org.springframework.beans.factory.ObjectProvider;
 
 import java.net.URI;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -65,11 +70,13 @@ public class CertificateDirectoryResolver {
 
         ResolvedCertificate resolved = resolveLeaf(query);
         X509Certificate issuer = resolveIssuer(resolved.leaf(), resolved.chain());
+        verifyChain(resolved.chain());
 
         URI ocspUri = firstNonBlankUri(properties.getOcsp().getUrl(), extractAiaOcspUrl(resolved.leaf()));
         URI crlUri = firstNonBlankUri(properties.getCrl().getUrl(), extractCdpUrl(resolved.leaf()));
 
-        return new CertificateStatusContext(resolved.leaf(), issuer, ocspUri, crlUri, provider());
+        return new CertificateStatusContext(resolved.leaf(), issuer, commonName(resolved.leaf()),
+                ocspUri, crlUri, provider());
     }
 
     private String provider() {
@@ -96,7 +103,7 @@ public class CertificateDirectoryResolver {
         }
         PkiClient.CertificateResponse response;
         try {
-            response = pkiClient.queryCertificate(query.serial());
+            response = pkiClient.queryCertificate(query.expectedSerial());
         } catch (CertificateStatusConfigurationException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -115,11 +122,11 @@ public class CertificateDirectoryResolver {
 
     private void verifyLeafIdentity(X509Certificate leaf, PkiClient.CertificateStatusQuery query) {
         String actualSerial = RevocationDigest.canonicalSerial(leaf.getSerialNumber());
-        if (!actualSerial.equals(query.serial())) {
+        if (!actualSerial.equals(query.expectedSerial())) {
             throw new CertificateStatusProtocolException(
-                    "Resolved certificate serial does not match requested serial");
+                    "Resolved certificate serial does not match expected serial");
         }
-        String normalizedFingerprint = query.sha256Fingerprint();
+        String normalizedFingerprint = query.expectedSha256Fingerprint();
         if (normalizedFingerprint != null) {
             String actualFingerprint;
             try {
@@ -129,12 +136,83 @@ public class CertificateDirectoryResolver {
             }
             if (!actualFingerprint.equalsIgnoreCase(normalizedFingerprint)) {
                 throw new CertificateStatusProtocolException(
-                        "Resolved certificate fingerprint does not match requested fingerprint");
+                        "Resolved certificate fingerprint does not match expected fingerprint");
             }
         }
-        if (!leaf.getNotAfter().after(leaf.getNotBefore())) {
+        verifyLeafValidityAndPurpose(leaf, query.decisionAt());
+    }
+
+    /**
+     * 校验叶子证书有效期与用途（FW-SEC-DSN-CR-010 §13.3）：有效期区间合法、在裁决时刻有效，
+     * 且为终端实体证书（非 CA，若声明 KeyUsage 则须允许 digitalSignature）。
+     */
+    private void verifyLeafValidityAndPurpose(X509Certificate leaf, Instant decisionAt) {
+        Instant notBefore = leaf.getNotBefore().toInstant();
+        Instant notAfter = leaf.getNotAfter().toInstant();
+        if (!notAfter.isAfter(notBefore)) {
             throw new CertificateStatusProtocolException("Resolved certificate has an invalid validity period");
         }
+        Instant at = decisionAt != null ? decisionAt : Instant.now();
+        if (at.isBefore(notBefore) || at.isAfter(notAfter)) {
+            throw new CertificateStatusProtocolException(
+                    "Resolved certificate is not valid at the decision time (expired or not yet valid)");
+        }
+        if (leaf.getBasicConstraints() >= 0) {
+            throw new CertificateStatusProtocolException(
+                    "Resolved leaf certificate must be an end-entity certificate, not a CA certificate");
+        }
+        boolean[] keyUsage = leaf.getKeyUsage();
+        if (keyUsage != null && (keyUsage.length == 0 || !keyUsage[0])) {
+            throw new CertificateStatusProtocolException(
+                    "Resolved leaf certificate keyUsage does not permit digitalSignature");
+        }
+    }
+
+    /**
+     * 校验 Provider 返回证书链的顺序与签名（叶子/issuer 一致性已单独校验）。
+     */
+    private void verifyChain(List<byte[]> chain) {
+        if (chain == null || chain.size() < 2) {
+            return;
+        }
+        List<X509Certificate> certificates = new ArrayList<>(chain.size());
+        for (byte[] der : chain) {
+            certificates.add(parseDer(der));
+        }
+        for (int i = 0; i < certificates.size() - 1; i++) {
+            X509Certificate signed = certificates.get(i);
+            X509Certificate signer = certificates.get(i + 1);
+            if (!signed.getIssuerX500Principal().equals(signer.getSubjectX500Principal())) {
+                throw new CertificateStatusProtocolException(
+                        "Certificate chain order is invalid at index " + i);
+            }
+            try {
+                signed.verify(signer.getPublicKey());
+            } catch (Exception e) {
+                throw new CertificateStatusProtocolException(
+                        "Certificate chain signature verification failed at index " + i, e);
+            }
+            if (signer.getBasicConstraints() < 0) {
+                throw new CertificateStatusProtocolException(
+                        "Certificate chain issuer at index " + (i + 1) + " is not a CA certificate");
+            }
+        }
+    }
+
+    /**
+     * 提取叶子证书 Subject CN（可能为空）。
+     */
+    private static String commonName(X509Certificate leaf) {
+        try {
+            X500Name subject = new JcaX509CertificateHolder(leaf).getSubject();
+            org.bouncycastle.asn1.x500.RDN[] commonNames = subject.getRDNs(BCStyle.CN);
+            if (commonNames != null && commonNames.length > 0) {
+                return IETFUtils.valueToString(commonNames[0].getFirst().getValue());
+            }
+        } catch (Exception e) {
+            log.debug("解析叶子证书 Subject CN 失败，返回 null");
+        }
+        return null;
     }
 
     private X509Certificate resolveIssuer(X509Certificate leaf, List<byte[]> chain) {
