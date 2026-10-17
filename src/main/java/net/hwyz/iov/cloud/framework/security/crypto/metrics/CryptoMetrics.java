@@ -441,6 +441,60 @@ public class CryptoMetrics {
     }
 
     /**
+     * 记录业务密钥 Provider 请求（FW-SEC-DSN-CR-011 §8.3）。
+     * <p>
+     * 标签仅使用固定枚举（operation/result），禁止 keyId/idempotencyKey/operationId/证书序列号/
+     * fingerprint/endpoint/Wrapped Key 等高基数或敏感标签。
+     */
+    public void recordBusinessKeyProviderRequest(String operation, String result) {
+        meterRegistry.counter("crypto.kms.business-key.requests",
+                "operation", normalizeBusinessKeyOperation(operation),
+                "result", normalizeBusinessKeyResult(result)).increment();
+    }
+
+    /**
+     * 记录业务密钥 Provider 调用时延（FW-SEC-DSN-CR-011 §8.3）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordBusinessKeyProviderLatency(String operation, long duration) {
+        Timer.builder("crypto.kms.business-key.latency")
+                .description("业务密钥 Provider 调用时延")
+                .tag("operation", normalizeBusinessKeyOperation(operation))
+                .register(meterRegistry)
+                .record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录业务密钥 Provider 幂等结果（FW-SEC-DSN-CR-011 §8.3）。
+     * <p>
+     * {@code result} 仅使用固定枚举：accepted / conflict / unknown。
+     */
+    public void recordBusinessKeyProviderIdempotency(String result) {
+        meterRegistry.counter("crypto.kms.business-key.idempotency",
+                "result", normalizeIdempotencyResult(result)).increment();
+    }
+
+    /**
+     * 记录业务密钥 Provider 结果未知（FW-SEC-DSN-CR-011 §8.3）。
+     */
+    public void recordBusinessKeyProviderOutcomeUnknown() {
+        meterRegistry.counter("crypto.kms.business-key.outcome-unknown").increment();
+    }
+
+    /**
+     * 注册业务密钥 Provider 就绪 gauge（1=READY，0=DOWN）。
+     *
+     * @param value 0/1 取值提供者
+     */
+    public void registerBusinessKeyProviderReadyGauge(java.util.function.Supplier<Number> value) {
+        io.micrometer.core.instrument.Gauge
+                .builder("crypto.kms.business-key.provider-ready", value, v -> v.get().doubleValue())
+                .description("业务密钥 Provider 就绪（1=READY，0=DOWN）")
+                .register(meterRegistry);
+    }
+
+    /**
      * 记录 provider × outcome 维度证书申请结果（FW-SEC-DSN-CR-008 §8）。
      * outcome 仅使用固定枚举（issued/rejected/failed/unknown/pending）。
      */
@@ -449,6 +503,45 @@ public class CryptoMetrics {
         String normalizedOutcome = normalizeOutcome(outcome);
         meterRegistry.counter("crypto.enrollment.outcome.count",
                 "provider", normalized, "outcome", normalizedOutcome).increment();
+    }
+
+    private static String normalizeBusinessKeyOperation(String operation) {
+        if (operation == null) {
+            return "unknown";
+        }
+        return switch (operation.trim().toLowerCase()) {
+            case "create" -> "create";
+            case "wrap" -> "wrap";
+            case "metadata" -> "metadata";
+            case "revoke" -> "revoke";
+            case "reconcile", "operation" -> "reconcile";
+            case "capabilities", "capability" -> "capabilities";
+            default -> "unknown";
+        };
+    }
+
+    private static String normalizeBusinessKeyResult(String result) {
+        if (result == null) {
+            return "unknown";
+        }
+        return switch (result.trim().toLowerCase()) {
+            case "success", "ok" -> "success";
+            case "error", "failed", "failure" -> "error";
+            case "conflict" -> "conflict";
+            case "outcome-unknown", "outcome_unknown", "unknown" -> "outcome-unknown";
+            default -> "unknown";
+        };
+    }
+
+    private static String normalizeIdempotencyResult(String result) {
+        if (result == null) {
+            return "unknown";
+        }
+        return switch (result.trim().toLowerCase()) {
+            case "accepted", "replay", "success" -> "accepted";
+            case "conflict" -> "conflict";
+            default -> "unknown";
+        };
     }
 
     private static String normalizeProvider(String provider) {

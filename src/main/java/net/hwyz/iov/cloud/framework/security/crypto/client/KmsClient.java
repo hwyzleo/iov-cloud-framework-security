@@ -23,15 +23,20 @@ public interface KmsClient {
     KmsKeyMaterial createDataKey(KmsCreateKeyCommand command);
 
     /**
-     * 按显式 keyRef 向显式收方封装（FW-SEC-DSN-CR-009 §9）。
+     * 按显式 keyRef 向显式收方封装（FW-SEC-DSN-CR-009 §9；FW-SEC-DSN-CR-011 §6.2）。
      * <p>
      * 无隐式收方推断；DEVICE_ROOT_KEK 仅在显式可信 wrappingKeyRef 下可用。
+     * 写操作请求已发送后超时/5xx 一律抛
+     * {@link net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException}。
      *
-     * @param keyRef    显式密钥引用
-     * @param recipient 显式收方
+     * @param keyRef         显式密钥引用
+     * @param recipient      显式收方
+     * @param operationId    客户端生成的 UUIDv7 操作标识（对账主键）
+     * @param idempotencyKey 幂等键
      * @return 瞬时封装结果
      */
-    KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient);
+    KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient,
+                          String operationId, String idempotencyKey);
 
     /**
      * 查询显式 keyRef 的材料元数据（FW-SEC-DSN-CR-009 §9）。
@@ -42,14 +47,35 @@ public interface KmsClient {
     KmsKeyMetadata getKeyMetadata(KmsKeyReference keyRef);
 
     /**
-     * 按显式 keyRef 吊销（幂等，FW-SEC-DSN-CR-009 §9）。
+     * 按显式 keyRef 吊销（幂等，FW-SEC-DSN-CR-009 §9；FW-SEC-DSN-CR-011 §6.4）。
      *
      * @param keyRef         显式密钥引用
      * @param reason         吊销原因
      * @param idempotencyKey 幂等键
+     * @param operationId    客户端生成的 UUIDv7 操作标识（对账主键）
      * @return 吊销结果（密码学状态）
      */
-    KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey);
+    KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey,
+                                  String operationId);
+
+    /**
+     * 按原 operationId 对账写操作结果（FW-SEC-DSN-CR-011 §6.5）。
+     * <p>
+     * 结果未知时调用方必须使用原 operationId/幂等键对账，不得换键重建。
+     *
+     * @param operationId 客户端生成的 UUIDv7 操作标识
+     * @return 对账结果（PENDING/SUCCEEDED/FAILED/UNKNOWN）
+     */
+    KmsOperationResult getOperation(String operationId);
+
+    /**
+     * 获取 Provider 能力声明（FW-SEC-DSN-CR-011 §6.5/§8.3）。
+     * <p>
+     * 启动门禁与 readiness 的核心依据；未就绪时业务密钥 capability 必须为 DOWN。
+     *
+     * @return Provider 能力声明
+     */
+    KmsProviderCapabilities getCapabilities();
 
     /**
      * 获取活跃数据密钥

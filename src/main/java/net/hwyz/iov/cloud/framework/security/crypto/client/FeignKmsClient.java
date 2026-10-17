@@ -3,29 +3,55 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyNotFoundException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyStateNotAllowedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
+import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KdfParams;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.CryptoKeyState;
+import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Feign KMS客户端实现
+ * Feign KMS客户端实现（FW-SEC-DSN-CR-011 冻结 wire contract）。
+ * <p>
+ * 运行期业务密钥材料改走独立 OpenBao business-key Provider 契约（{@code /v1/business-key/...}）；
+ * 标准 Transit 只保留通用原语职责，禁止再调用虚构的 {@code /v1/transit/business-key/*}。
  */
 public class FeignKmsClient implements KmsClient {
 
+    private static final Pattern ERROR_CODE = Pattern.compile("\"code\"\\s*:\\s*\"([^\"]+)\"");
+
     private final CryptoProperties properties;
     private final KmsFeignClient kmsFeignClient;
+    private final CryptoMetrics cryptoMetrics;
+
+    /**
+     * 最近一次探测的 Provider 能力状态；未探测/探测失败视为 DOWN（fail-closed）。
+     */
+    private volatile boolean capabilityReady = false;
 
     public FeignKmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient) {
+        this(properties, kmsFeignClient, null);
+    }
+
+    public FeignKmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient,
+                          CryptoMetrics cryptoMetrics) {
         this.properties = properties;
         this.kmsFeignClient = kmsFeignClient;
+        this.cryptoMetrics = cryptoMetrics;
     }
 
     @Override
@@ -174,126 +200,288 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
-    // ==================== 业务密钥材料（FW-SEC-DSN-CR-009 §9） ====================
+    // ==================== 业务密钥材料 Provider（FW-SEC-DSN-CR-011 §6） ====================
 
     @Override
     public KmsKeyMaterial createDataKey(KmsCreateKeyCommand command) {
+        long start = System.currentTimeMillis();
         try {
             CreateBusinessKeyRequest request = new CreateBusinessKeyRequest();
-            request.setBizType(command.bizType());
+            request.setOperationId(command.operationId());
+            request.setIdempotencyKey(command.idempotencyKey());
             request.setAlgorithm(command.algorithm());
             request.setKeySpec(command.keySpec());
-            request.setIdempotencyKey(command.idempotencyKey());
-            request.setAuditContext(command.auditContext());
+            request.setValidFrom(toIso(command.validFrom()));
+            request.setValidTo(toIso(command.validTo()));
+            request.setAuditContextDigest(command.auditContextDigest());
             CreateBusinessKeyResponse response = kmsFeignClient.createBusinessKey(request);
+            recordSuccess("create", start);
+            if (cryptoMetrics != null) {
+                cryptoMetrics.recordBusinessKeyProviderIdempotency("accepted");
+            }
             return mapKeyMaterial(response);
         } catch (CryptoException e) {
+            recordFailure("create", start, e);
             throw e;
         } catch (Exception e) {
-            throw classify(e, "create business key");
+            recordFailure("create", start, e);
+            // create 路径上的 404 只能表示路由/Provider 异常，绝不可归为业务密钥不存在
+            throw classify(e, "create business key", false, true, command.operationId());
         }
     }
 
     @Override
-    public KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient) {
+    public KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient,
+                                 String operationId, String idempotencyKey) {
+        long start = System.currentTimeMillis();
         try {
             WrapBusinessKeyRequest request = new WrapBusinessKeyRequest();
-            request.setKeyId(keyRef.keyId());
-            request.setKmsKeyRef(keyRef.kmsKeyRef());
-            request.setMode(recipient.mode().name());
-            request.setCertSerial(recipient.certSerial());
-            request.setSpki(recipient.spki());
-            request.setAudience(recipient.audience());
-            request.setWrappingKeyRef(recipient.wrappingKeyRef());
-            WrapBusinessKeyResponse response = kmsFeignClient.wrapBusinessKey(request);
+            request.setOperationId(operationId);
+            request.setIdempotencyKey(idempotencyKey);
+            request.setMode(recipient.mode() != null ? recipient.mode().name() : null);
+            request.setRecipient(toRecipient(recipient));
+            WrapBusinessKeyResponse response = kmsFeignClient.wrapBusinessKey(keyRef.keyId(), request);
+            recordSuccess("wrap", start);
+            if (cryptoMetrics != null) {
+                cryptoMetrics.recordBusinessKeyProviderIdempotency("accepted");
+            }
             return mapWrappedKey(response);
         } catch (CryptoException e) {
+            recordFailure("wrap", start, e);
             throw e;
         } catch (Exception e) {
-            throw classify(e, "wrap business key");
+            recordFailure("wrap", start, e);
+            throw classify(e, "wrap business key", true, true, operationId);
         }
     }
 
     @Override
     public KmsKeyMetadata getKeyMetadata(KmsKeyReference keyRef) {
+        long start = System.currentTimeMillis();
         try {
-            BusinessKeyMetadataRequest request = new BusinessKeyMetadataRequest();
-            request.setKeyId(keyRef.keyId());
-            request.setKmsKeyRef(keyRef.kmsKeyRef());
-            BusinessKeyMetadataResponse response = kmsFeignClient.getBusinessKeyMetadata(request);
+            BusinessKeyMetadataResponse response = kmsFeignClient.getBusinessKeyMetadata(keyRef.keyId());
+            recordSuccess("metadata", start);
             return mapKeyMetadata(response);
         } catch (CryptoException e) {
+            recordFailure("metadata", start, e);
             throw e;
         } catch (Exception e) {
-            throw classify(e, "get business key metadata");
+            recordFailure("metadata", start, e);
+            throw classify(e, "get business key metadata", true, false, null);
         }
     }
 
     @Override
-    public KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey) {
+    public KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey,
+                                         String operationId) {
+        long start = System.currentTimeMillis();
         try {
             RevokeBusinessKeyRequest request = new RevokeBusinessKeyRequest();
-            request.setKeyId(keyRef.keyId());
-            request.setKmsKeyRef(keyRef.kmsKeyRef());
-            request.setReason(reason);
+            request.setOperationId(operationId);
             request.setIdempotencyKey(idempotencyKey);
-            RevokeBusinessKeyResponse response = kmsFeignClient.revokeBusinessKey(request);
+            request.setReasonCode(reason);
+            RevokeBusinessKeyResponse response = kmsFeignClient.revokeBusinessKey(keyRef.keyId(), request);
+            recordSuccess("revoke", start);
+            if (cryptoMetrics != null) {
+                cryptoMetrics.recordBusinessKeyProviderIdempotency("accepted");
+            }
             return new KmsRevocationResult(
                     response.getKeyId(),
                     parseState(response.getState()),
                     response.getChangedAt() != null ? Instant.parse(response.getChangedAt()) : null);
         } catch (CryptoException e) {
+            recordFailure("revoke", start, e);
             throw e;
         } catch (Exception e) {
-            throw classify(e, "revoke business key");
+            recordFailure("revoke", start, e);
+            throw classify(e, "revoke business key", true, true, operationId);
         }
     }
 
+    @Override
+    public KmsOperationResult getOperation(String operationId) {
+        long start = System.currentTimeMillis();
+        try {
+            OperationResponse response = kmsFeignClient.getBusinessKeyOperation(operationId);
+            recordSuccess("reconcile", start);
+            return new KmsOperationResult(
+                    response.getOperationId() != null ? response.getOperationId() : operationId,
+                    parseOperationState(response.getState()),
+                    response.getResultRef(),
+                    response.getMessage());
+        } catch (CryptoException e) {
+            recordFailure("reconcile", start, e);
+            throw e;
+        } catch (Exception e) {
+            recordFailure("reconcile", start, e);
+            throw classify(e, "reconcile business key operation", true, false, operationId);
+        }
+    }
+
+    @Override
+    public KmsProviderCapabilities getCapabilities() {
+        long start = System.currentTimeMillis();
+        try {
+            CapabilitiesResponse response = kmsFeignClient.getBusinessKeyCapabilities();
+            KmsProviderCapabilities capabilities = mapCapabilities(response);
+            this.capabilityReady = capabilities.isReady();
+            recordSuccess("capabilities", start);
+            return capabilities;
+        } catch (Exception e) {
+            this.capabilityReady = false;
+            recordFailure("capabilities", start, e);
+            throw classify(e, "get business key capabilities", false, false, null);
+        }
+    }
+
+    // ==================== 异常分类（FW-SEC-DSN-CR-011 §6.6） ====================
+
     /**
-     * 业务密钥材料操作失败分类（FW-SEC-DSN-CR-009 §7/§11）。
-     * <p>
-     * - 404 → BusinessKeyNotFoundException；
-     * - 409 → BusinessKeyIdempotencyConflictException；
-     * - 5xx / 超时 / retryable（请求体可能已发送）→ CryptoOperationOutcomeUnknownException（须原幂等键对账）；
-     * - 连接拒绝等请求体明确未发送 → CryptoDependencyUnavailableException（可按预算重试）。
-     * 精确区分最终由 KMS Provider Adapter 负责，此处为框架兜底分类。
+     * 业务密钥 Provider 失败分类矩阵（FW-SEC-DSN-CR-011 §6.6）。
+     *
+     * @param allowStructuredNotFound 是否允许把结构化 BUSINESS_KEY_NOT_FOUND 映射为 NotFound
+     *                                （create/capabilities 恒为 false）
+     * @param writeOperation          是否写操作（已发送后 5xx/超时转 outcome unknown）
+     * @param operationId             写操作 operationId（用于对账提示）
      */
-    private CryptoException classify(Exception e, String op) {
-        Throwable t = unwrapCause(e);
-        if (t instanceof feign.FeignException fe) {
+    private CryptoException classify(Exception e, String op, boolean allowStructuredNotFound,
+                                     boolean writeOperation, String operationId) {
+        // 连接建立前失败：可证明请求体未发送，可按预算重试
+        if (findCause(e, ConnectException.class) != null || findCause(e, UnknownHostException.class) != null) {
+            return new CryptoDependencyUnavailableException(
+                    op + " unavailable (request not sent)", e);
+        }
+        // 请求可能已发送：结果未知
+        if (findCause(e, SocketTimeoutException.class) != null) {
+            return outcomeUnknown(op, operationId, "timeout", e);
+        }
+
+        feign.FeignException fe = findCause(e, feign.FeignException.class);
+        if (fe != null) {
             int status = fe.status();
-            if (status == 404) {
-                return new BusinessKeyNotFoundException(op + " not found (http 404)", e);
+            KmsErrorCode code = extractErrorCode(fe);
+            switch (status) {
+                case 404:
+                    if (allowStructuredNotFound && capabilityReady && code == KmsErrorCode.BUSINESS_KEY_NOT_FOUND) {
+                        return new BusinessKeyNotFoundException(op + " not found (http 404)", e);
+                    }
+                    return new CryptoDependencyUnavailableException(
+                            op + " provider route/mount unavailable (http 404, code=" + code + ")", e);
+                case 409:
+                    if (cryptoMetrics != null) {
+                        cryptoMetrics.recordBusinessKeyProviderIdempotency("conflict");
+                    }
+                    return new BusinessKeyIdempotencyConflictException(
+                            op + " idempotency conflict (http 409)", e);
+                case 410:
+                    return new BusinessKeyStateNotAllowedException(
+                            op + " key revoked/expired (http 410, code=" + code + ")", e);
+                case 400:
+                case 422:
+                    return new CryptoDependencyUnavailableException(
+                            op + " invalid/unsupported request (http " + status + ", code=" + code + ")", e);
+                case 401:
+                case 403:
+                    return new CryptoDependencyUnavailableException(
+                            op + " authentication/authorization failed (http " + status + ", code=" + code + ")", e);
+                case 429:
+                    return new CryptoDependencyUnavailableException(
+                            op + " rate limited (http 429, code=" + code + ")", e);
+                default:
+                    if (status < 0 || status >= 500) {
+                        return writeOperation
+                                ? outcomeUnknown(op, operationId, "http " + status, e)
+                                : new CryptoDependencyUnavailableException(
+                                        op + " provider not ready (http " + status + ", code=" + code + ")", e);
+                    }
+                    return new CryptoDependencyUnavailableException(
+                            op + " failed (http " + status + ", code=" + code + ")", e);
             }
-            if (status == 409) {
-                return new BusinessKeyIdempotencyConflictException(op + " idempotency conflict (http 409)", e);
-            }
-            if (status < 0 || status >= 500) {
-                return new CryptoOperationOutcomeUnknownException(
-                        op + " outcome unknown (http " + status + ")", e);
-            }
-            return new CryptoDependencyUnavailableException(op + " failed (http " + status + ")", e);
         }
-        if (t instanceof java.net.SocketTimeoutException) {
-            return new CryptoOperationOutcomeUnknownException(op + " outcome unknown (timeout)", e);
-        }
-        if (t instanceof java.net.ConnectException) {
-            return new CryptoDependencyUnavailableException(op + " unavailable (connect, request not sent)", e);
-        }
-        if (t instanceof feign.RetryableException) {
-            return new CryptoOperationOutcomeUnknownException(op + " outcome unknown (retryable)", e);
+
+        if (findCause(e, feign.RetryableException.class) != null) {
+            return outcomeUnknown(op, operationId, "retryable", e);
         }
         return new CryptoDependencyUnavailableException(op + " failed", e);
     }
 
-    private Throwable unwrapCause(Throwable t) {
+    private CryptoOperationOutcomeUnknownException outcomeUnknown(String op, String operationId,
+                                                                  String detail, Throwable cause) {
+        if (cryptoMetrics != null) {
+            cryptoMetrics.recordBusinessKeyProviderOutcomeUnknown();
+        }
+        String message = op + " outcome unknown (" + detail + ")"
+                + (operationId != null ? "; reconcile with original operationId=" + operationId : "");
+        return new CryptoOperationOutcomeUnknownException(message, cause, operationId);
+    }
+
+    /**
+     * 解析统一错误体 {@code {"code": "...", ...}}；非契约错误体/HTML/OpenBao 原生 errors 体一律 UNKNOWN。
+     */
+    private KmsErrorCode extractErrorCode(feign.FeignException fe) {
+        try {
+            String body = fe.contentUTF8();
+            if (body == null || body.isBlank()) {
+                return KmsErrorCode.UNKNOWN;
+            }
+            String trimmed = body.trim();
+            if (trimmed.startsWith("<")) {
+                return KmsErrorCode.UNKNOWN;
+            }
+            Matcher matcher = ERROR_CODE.matcher(body);
+            if (matcher.find()) {
+                return KmsErrorCode.fromWire(matcher.group(1));
+            }
+            return KmsErrorCode.UNKNOWN;
+        } catch (Exception ignore) {
+            return KmsErrorCode.UNKNOWN;
+        }
+    }
+
+    private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
         Throwable current = t;
         int depth = 0;
-        while (current != null && current.getCause() != null && depth < 6) {
+        while (current != null && depth < 8) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
             current = current.getCause();
             depth++;
         }
-        return current != null ? current : t;
+        return null;
+    }
+
+    private void recordSuccess(String operation, long start) {
+        if (cryptoMetrics != null) {
+            cryptoMetrics.recordBusinessKeyProviderRequest(operation, "success");
+            cryptoMetrics.recordBusinessKeyProviderLatency(operation, System.currentTimeMillis() - start);
+        }
+    }
+
+    private void recordFailure(String operation, long start, Throwable error) {
+        if (cryptoMetrics != null) {
+            String result = error instanceof CryptoOperationOutcomeUnknownException
+                    ? "outcome-unknown" : "error";
+            cryptoMetrics.recordBusinessKeyProviderRequest(operation, result);
+            cryptoMetrics.recordBusinessKeyProviderLatency(operation, System.currentTimeMillis() - start);
+        }
+    }
+
+    private static String toIso(Instant instant) {
+        return instant != null ? instant.toString() : null;
+    }
+
+    private WrapRecipient toRecipient(KmsRecipient recipient) {
+        WrapRecipient wire = new WrapRecipient();
+        wire.setCertSerial(recipient.certSerial());
+        wire.setCertificateDer(recipient.certificateDer());
+        wire.setCertificateSha256(recipient.certificateSha256Fingerprint());
+        wire.setSpki(recipient.spki());
+        wire.setAllowedAlgorithms(recipient.allowedAlgorithms());
+        wire.setAudience(recipient.audience());
+        wire.setRuntimeKeyRef(recipient.runtimeKeyRef());
+        wire.setWrappingKeyRef(recipient.wrappingKeyRef());
+        return wire;
     }
 
     private KmsKeyMaterial mapKeyMaterial(CreateBusinessKeyResponse response) {
@@ -309,11 +497,13 @@ public class FeignKmsClient implements KmsClient {
     }
 
     private KmsWrappedKey mapWrappedKey(WrapBusinessKeyResponse response) {
+        String algorithm = response.getWrappingAlgorithm() != null
+                ? response.getWrappingAlgorithm() : response.getAlgorithm();
         return new KmsWrappedKey(
                 response.getWrapped(),
                 response.getKeyId(),
                 response.getKmsKeyVersion(),
-                response.getAlgorithm(),
+                algorithm,
                 response.getExpiry() != null ? Instant.parse(response.getExpiry()) : null,
                 response.getParameters());
     }
@@ -330,6 +520,39 @@ public class FeignKmsClient implements KmsClient {
                 response.getValidFrom() != null ? Instant.parse(response.getValidFrom()) : null,
                 response.getValidTo() != null ? Instant.parse(response.getValidTo()) : null,
                 response.getDecryptUntil() != null ? Instant.parse(response.getDecryptUntil()) : null);
+    }
+
+    private KmsProviderCapabilities mapCapabilities(CapabilitiesResponse response) {
+        boolean storageReady = Boolean.TRUE.equals(response.getStorageReady());
+        boolean mountReady = Boolean.TRUE.equals(response.getMountReady());
+        boolean ready = Boolean.TRUE.equals(response.getReady()) || (storageReady && mountReady);
+        return new KmsProviderCapabilities(
+                response.getProvider(),
+                response.getApiVersion(),
+                response.getMount(),
+                ready,
+                storageReady,
+                mountReady,
+                toSet(response.getAlgorithms()),
+                toSet(response.getWrapModes()));
+    }
+
+    private static java.util.Set<String> toSet(List<String> values) {
+        if (values == null) {
+            return java.util.Set.of();
+        }
+        return new java.util.TreeSet<>(values);
+    }
+
+    private KmsOperationState parseOperationState(String state) {
+        if (state == null) {
+            return KmsOperationState.UNKNOWN;
+        }
+        try {
+            return KmsOperationState.valueOf(state.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return KmsOperationState.UNKNOWN;
+        }
     }
 
     private CryptoKeyState parseState(String state) {
@@ -365,6 +588,8 @@ public class FeignKmsClient implements KmsClient {
                 kdfParams
         );
     }
+
+    // ==================== 通用 Transit DTO ====================
 
     public static class WrappedKeyResponse {
         private String keyId;
@@ -819,21 +1044,31 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
-    // ==================== 业务密钥材料 DTO（FW-SEC-DSN-CR-009 §9） ====================
+    // ==================== 业务密钥材料 Provider DTO（FW-SEC-DSN-CR-011 §6） ====================
 
     public static class CreateBusinessKeyRequest {
-        private String bizType;
+        private String operationId;
+        private String idempotencyKey;
         private String algorithm;
         private String keySpec;
-        private String idempotencyKey;
-        private Map<String, String> auditContext;
+        private String validFrom;
+        private String validTo;
+        private String auditContextDigest;
 
-        public String getBizType() {
-            return bizType;
+        public String getOperationId() {
+            return operationId;
         }
 
-        public void setBizType(String bizType) {
-            this.bizType = bizType;
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
+
+        public String getIdempotencyKey() {
+            return idempotencyKey;
+        }
+
+        public void setIdempotencyKey(String idempotencyKey) {
+            this.idempotencyKey = idempotencyKey;
         }
 
         public String getAlgorithm() {
@@ -852,20 +1087,28 @@ public class FeignKmsClient implements KmsClient {
             this.keySpec = keySpec;
         }
 
-        public String getIdempotencyKey() {
-            return idempotencyKey;
+        public String getValidFrom() {
+            return validFrom;
         }
 
-        public void setIdempotencyKey(String idempotencyKey) {
-            this.idempotencyKey = idempotencyKey;
+        public void setValidFrom(String validFrom) {
+            this.validFrom = validFrom;
         }
 
-        public Map<String, String> getAuditContext() {
-            return auditContext;
+        public String getValidTo() {
+            return validTo;
         }
 
-        public void setAuditContext(Map<String, String> auditContext) {
-            this.auditContext = auditContext;
+        public void setValidTo(String validTo) {
+            this.validTo = validTo;
+        }
+
+        public String getAuditContextDigest() {
+            return auditContextDigest;
+        }
+
+        public void setAuditContextDigest(String auditContextDigest) {
+            this.auditContextDigest = auditContextDigest;
         }
     }
 
@@ -876,8 +1119,10 @@ public class FeignKmsClient implements KmsClient {
         private String provider;
         private String algorithm;
         private String keySpec;
+        private String state;
         private String validFrom;
         private String validTo;
+        private String operationId;
 
         public String getKeyId() {
             return keyId;
@@ -927,6 +1172,14 @@ public class FeignKmsClient implements KmsClient {
             this.keySpec = keySpec;
         }
 
+        public String getState() {
+            return state;
+        }
+
+        public void setState(String state) {
+            this.state = state;
+        }
+
         public String getValidFrom() {
             return validFrom;
         }
@@ -942,31 +1195,36 @@ public class FeignKmsClient implements KmsClient {
         public void setValidTo(String validTo) {
             this.validTo = validTo;
         }
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
     }
 
     public static class WrapBusinessKeyRequest {
-        private String keyId;
-        private String kmsKeyRef;
+        private String operationId;
+        private String idempotencyKey;
         private String mode;
-        private String certSerial;
-        private byte[] spki;
-        private String audience;
-        private String wrappingKeyRef;
+        private WrapRecipient recipient;
 
-        public String getKeyId() {
-            return keyId;
+        public String getOperationId() {
+            return operationId;
         }
 
-        public void setKeyId(String keyId) {
-            this.keyId = keyId;
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
         }
 
-        public String getKmsKeyRef() {
-            return kmsKeyRef;
+        public String getIdempotencyKey() {
+            return idempotencyKey;
         }
 
-        public void setKmsKeyRef(String kmsKeyRef) {
-            this.kmsKeyRef = kmsKeyRef;
+        public void setIdempotencyKey(String idempotencyKey) {
+            this.idempotencyKey = idempotencyKey;
         }
 
         public String getMode() {
@@ -977,12 +1235,47 @@ public class FeignKmsClient implements KmsClient {
             this.mode = mode;
         }
 
+        public WrapRecipient getRecipient() {
+            return recipient;
+        }
+
+        public void setRecipient(WrapRecipient recipient) {
+            this.recipient = recipient;
+        }
+    }
+
+    public static class WrapRecipient {
+        private String certSerial;
+        private byte[] certificateDer;
+        private String certificateSha256;
+        private byte[] spki;
+        private List<String> allowedAlgorithms;
+        private String audience;
+        private String runtimeKeyRef;
+        private String wrappingKeyRef;
+
         public String getCertSerial() {
             return certSerial;
         }
 
         public void setCertSerial(String certSerial) {
             this.certSerial = certSerial;
+        }
+
+        public byte[] getCertificateDer() {
+            return certificateDer;
+        }
+
+        public void setCertificateDer(byte[] certificateDer) {
+            this.certificateDer = certificateDer;
+        }
+
+        public String getCertificateSha256() {
+            return certificateSha256;
+        }
+
+        public void setCertificateSha256(String certificateSha256) {
+            this.certificateSha256 = certificateSha256;
         }
 
         public byte[] getSpki() {
@@ -993,12 +1286,28 @@ public class FeignKmsClient implements KmsClient {
             this.spki = spki;
         }
 
+        public List<String> getAllowedAlgorithms() {
+            return allowedAlgorithms;
+        }
+
+        public void setAllowedAlgorithms(List<String> allowedAlgorithms) {
+            this.allowedAlgorithms = allowedAlgorithms;
+        }
+
         public String getAudience() {
             return audience;
         }
 
         public void setAudience(String audience) {
             this.audience = audience;
+        }
+
+        public String getRuntimeKeyRef() {
+            return runtimeKeyRef;
+        }
+
+        public void setRuntimeKeyRef(String runtimeKeyRef) {
+            this.runtimeKeyRef = runtimeKeyRef;
         }
 
         public String getWrappingKeyRef() {
@@ -1014,6 +1323,7 @@ public class FeignKmsClient implements KmsClient {
         private byte[] wrapped;
         private String keyId;
         private Integer kmsKeyVersion;
+        private String wrappingAlgorithm;
         private String algorithm;
         private String expiry;
         private Map<String, String> parameters;
@@ -1042,6 +1352,14 @@ public class FeignKmsClient implements KmsClient {
             this.kmsKeyVersion = kmsKeyVersion;
         }
 
+        public String getWrappingAlgorithm() {
+            return wrappingAlgorithm;
+        }
+
+        public void setWrappingAlgorithm(String wrappingAlgorithm) {
+            this.wrappingAlgorithm = wrappingAlgorithm;
+        }
+
         public String getAlgorithm() {
             return algorithm;
         }
@@ -1067,27 +1385,6 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
-    public static class BusinessKeyMetadataRequest {
-        private String keyId;
-        private String kmsKeyRef;
-
-        public String getKeyId() {
-            return keyId;
-        }
-
-        public void setKeyId(String keyId) {
-            this.keyId = keyId;
-        }
-
-        public String getKmsKeyRef() {
-            return kmsKeyRef;
-        }
-
-        public void setKmsKeyRef(String kmsKeyRef) {
-            this.kmsKeyRef = kmsKeyRef;
-        }
-    }
-
     public static class BusinessKeyMetadataResponse {
         private String keyId;
         private String kmsKeyRef;
@@ -1098,6 +1395,8 @@ public class FeignKmsClient implements KmsClient {
         private String state;
         private String validFrom;
         private String validTo;
+        private String createdAt;
+        private String revokedAt;
         private String decryptUntil;
 
         public String getKeyId() {
@@ -1172,6 +1471,22 @@ public class FeignKmsClient implements KmsClient {
             this.validTo = validTo;
         }
 
+        public String getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(String createdAt) {
+            this.createdAt = createdAt;
+        }
+
+        public String getRevokedAt() {
+            return revokedAt;
+        }
+
+        public void setRevokedAt(String revokedAt) {
+            this.revokedAt = revokedAt;
+        }
+
         public String getDecryptUntil() {
             return decryptUntil;
         }
@@ -1182,33 +1497,16 @@ public class FeignKmsClient implements KmsClient {
     }
 
     public static class RevokeBusinessKeyRequest {
-        private String keyId;
-        private String kmsKeyRef;
-        private String reason;
+        private String operationId;
         private String idempotencyKey;
+        private String reasonCode;
 
-        public String getKeyId() {
-            return keyId;
+        public String getOperationId() {
+            return operationId;
         }
 
-        public void setKeyId(String keyId) {
-            this.keyId = keyId;
-        }
-
-        public String getKmsKeyRef() {
-            return kmsKeyRef;
-        }
-
-        public void setKmsKeyRef(String kmsKeyRef) {
-            this.kmsKeyRef = kmsKeyRef;
-        }
-
-        public String getReason() {
-            return reason;
-        }
-
-        public void setReason(String reason) {
-            this.reason = reason;
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
         }
 
         public String getIdempotencyKey() {
@@ -1218,12 +1516,21 @@ public class FeignKmsClient implements KmsClient {
         public void setIdempotencyKey(String idempotencyKey) {
             this.idempotencyKey = idempotencyKey;
         }
+
+        public String getReasonCode() {
+            return reasonCode;
+        }
+
+        public void setReasonCode(String reasonCode) {
+            this.reasonCode = reasonCode;
+        }
     }
 
     public static class RevokeBusinessKeyResponse {
         private String keyId;
         private String state;
         private String changedAt;
+        private String operationId;
 
         public String getKeyId() {
             return keyId;
@@ -1247,6 +1554,167 @@ public class FeignKmsClient implements KmsClient {
 
         public void setChangedAt(String changedAt) {
             this.changedAt = changedAt;
+        }
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
+    }
+
+    public static class OperationResponse {
+        private String operationId;
+        private String state;
+        private String resultRef;
+        private String message;
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public void setState(String state) {
+            this.state = state;
+        }
+
+        public String getResultRef() {
+            return resultRef;
+        }
+
+        public void setResultRef(String resultRef) {
+            this.resultRef = resultRef;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public void setMessage(String message) {
+            this.message = message;
+        }
+    }
+
+    public static class CapabilitiesResponse {
+        private String provider;
+        private String apiVersion;
+        private String mount;
+        private Boolean ready;
+        private Boolean storageReady;
+        private Boolean mountReady;
+        private List<String> algorithms;
+        private List<String> wrapModes;
+
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
+        }
+
+        public String getApiVersion() {
+            return apiVersion;
+        }
+
+        public void setApiVersion(String apiVersion) {
+            this.apiVersion = apiVersion;
+        }
+
+        public String getMount() {
+            return mount;
+        }
+
+        public void setMount(String mount) {
+            this.mount = mount;
+        }
+
+        public Boolean getReady() {
+            return ready;
+        }
+
+        public void setReady(Boolean ready) {
+            this.ready = ready;
+        }
+
+        public Boolean getStorageReady() {
+            return storageReady;
+        }
+
+        public void setStorageReady(Boolean storageReady) {
+            this.storageReady = storageReady;
+        }
+
+        public Boolean getMountReady() {
+            return mountReady;
+        }
+
+        public void setMountReady(Boolean mountReady) {
+            this.mountReady = mountReady;
+        }
+
+        public List<String> getAlgorithms() {
+            return algorithms;
+        }
+
+        public void setAlgorithms(List<String> algorithms) {
+            this.algorithms = algorithms;
+        }
+
+        public List<String> getWrapModes() {
+            return wrapModes;
+        }
+
+        public void setWrapModes(List<String> wrapModes) {
+            this.wrapModes = wrapModes;
+        }
+    }
+
+    public static class ErrorResponse {
+        private String code;
+        private String message;
+        private String operationId;
+        private Boolean retryable;
+
+        public String getCode() {
+            return code;
+        }
+
+        public void setCode(String code) {
+            this.code = code;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public void setMessage(String message) {
+            this.message = message;
+        }
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
+
+        public Boolean getRetryable() {
+            return retryable;
+        }
+
+        public void setRetryable(Boolean retryable) {
+            this.retryable = retryable;
         }
     }
 }

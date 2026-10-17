@@ -9,7 +9,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.DefaultVmdBusinessKeyDirecto
 import net.hwyz.iov.cloud.framework.security.crypto.VmdBusinessKeyDirectoryClient;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
+import net.hwyz.iov.cloud.framework.security.crypto.client.KmsBusinessKeyProviderReadiness;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.KmsProviderCapabilities;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyDescriptor;
@@ -24,6 +26,7 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * CryptoAutoConfiguration 业务密钥装配集成测试（FW-SEC-DSN-CR-009 §10/§12 集成）。
@@ -42,8 +45,54 @@ class CryptoAutoConfigurationBusinessKeyTest {
     @Test
     void businessKeyMaterialTemplate_enabled_assemblesDefaultImpl() {
         BusinessKeyMaterialTemplate template = configuration.businessKeyMaterialTemplate(
-                kmsClient, cryptoMetrics, properties);
+                kmsClient, cryptoMetrics, properties, providerOf(null));
         assertTrue(template instanceof DefaultBusinessKeyMaterialTemplate);
+    }
+
+    @Test
+    void providerReadiness_readyCapability_assemblesAndDoesNotFailStartup() {
+        properties.getKms().setEndpoint("http://openiov-openbao:8200");
+        when(kmsClient.getCapabilities()).thenReturn(new KmsProviderCapabilities(
+                "openbao-business-key", "v1", "business-key", true, true, true,
+                java.util.Set.of("AES_256"),
+                java.util.Set.of("DEVICE_CERT_PUBLIC_KEY", "RUNTIME")));
+
+        KmsBusinessKeyProviderReadiness readiness =
+                configuration.kmsBusinessKeyProviderReadiness(kmsClient, properties, cryptoMetrics);
+
+        assertTrue(readiness.isReady());
+    }
+
+    @Test
+    void providerReadiness_notReadyCapability_failsClosedAtStartup() {
+        properties.getKms().setEndpoint("http://openiov-openbao:8200");
+        when(kmsClient.getCapabilities()).thenReturn(KmsProviderCapabilities.down());
+
+        assertThrows(IllegalStateException.class,
+                () -> configuration.kmsBusinessKeyProviderReadiness(kmsClient, properties, cryptoMetrics));
+    }
+
+    @Test
+    void providerReadiness_mountMismatch_failsClosedAtStartup() {
+        properties.getKms().setEndpoint("http://openiov-openbao:8200");
+        when(kmsClient.getCapabilities()).thenReturn(new KmsProviderCapabilities(
+                "openbao-business-key", "v1", "wrong-mount", true, true, true,
+                java.util.Set.of("AES_256"),
+                java.util.Set.of("DEVICE_CERT_PUBLIC_KEY")));
+
+        assertThrows(IllegalStateException.class,
+                () -> configuration.kmsBusinessKeyProviderReadiness(kmsClient, properties, cryptoMetrics));
+    }
+
+    @Test
+    void providerReadiness_missingRequiredWrapMode_failsClosedAtStartup() {
+        properties.getKms().setEndpoint("http://openiov-openbao:8200");
+        when(kmsClient.getCapabilities()).thenReturn(new KmsProviderCapabilities(
+                "openbao-business-key", "v1", "business-key", true, true, true,
+                java.util.Set.of("AES_256"), java.util.Set.of("RUNTIME")));
+
+        assertThrows(IllegalStateException.class,
+                () -> configuration.kmsBusinessKeyProviderReadiness(kmsClient, properties, cryptoMetrics));
     }
 
     @Test

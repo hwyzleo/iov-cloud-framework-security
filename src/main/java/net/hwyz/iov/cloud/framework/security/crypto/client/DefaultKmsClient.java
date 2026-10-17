@@ -17,7 +17,8 @@ public class DefaultKmsClient implements KmsClient {
     }
 
     @Override
-    public KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient) {
+    public KmsWrappedKey wrapKey(KmsKeyReference keyRef, KmsRecipient recipient,
+                                 String operationId, String idempotencyKey) {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 
@@ -27,7 +28,18 @@ public class DefaultKmsClient implements KmsClient {
     }
 
     @Override
-    public KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey) {
+    public KmsRevocationResult revokeKey(KmsKeyReference keyRef, String reason, String idempotencyKey,
+                                         String operationId) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public KmsOperationResult getOperation(String operationId) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
+
+    @Override
+    public KmsProviderCapabilities getCapabilities() {
         throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
     }
 

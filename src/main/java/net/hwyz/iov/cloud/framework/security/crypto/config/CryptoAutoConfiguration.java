@@ -22,6 +22,8 @@ import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultPkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.FeignKmsClient;
+import net.hwyz.iov.cloud.framework.security.crypto.client.KmsBusinessKeyHealthIndicator;
+import net.hwyz.iov.cloud.framework.security.crypto.client.KmsBusinessKeyProviderReadiness;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.LegacyRestPkiClient;
@@ -51,11 +53,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -90,8 +94,9 @@ public class CryptoAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
-    public KmsClient kmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient) {
-        return new FeignKmsClient(properties, kmsFeignClient);
+    public KmsClient kmsClient(CryptoProperties properties, KmsFeignClient kmsFeignClient,
+                               CryptoMetrics cryptoMetrics) {
+        return new FeignKmsClient(properties, kmsFeignClient, cryptoMetrics);
     }
 
     @Bean
@@ -138,8 +143,32 @@ public class CryptoAutoConfiguration {
     @ConditionalOnProperty(prefix = "crypto.business-key", name = "enabled", havingValue = "true")
     public BusinessKeyMaterialTemplate businessKeyMaterialTemplate(KmsClient kmsClient,
                                                                    CryptoMetrics cryptoMetrics,
-                                                                   CryptoProperties properties) {
-        return new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties);
+                                                                   CryptoProperties properties,
+                                                                   ObjectProvider<CertResolver> certResolverProvider) {
+        return new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties,
+                certResolverProvider.getIfAvailable());
+    }
+
+    /**
+     * 业务密钥 Provider 能力门禁与就绪状态（FW-SEC-DSN-CR-011 §7/§8.3）。
+     * <p>
+     * 受 {@code crypto.kms.business-key.enabled} 控制（仅 Provider 适配），与公共门面开关
+     * {@code crypto.business-key.enabled} 区分。require-ready-at-startup=true 且 capability 未 READY 时
+     * 启动 fail-closed；同时注册 provider-ready gauge 供 VMD keyprov readiness 与运维门禁使用。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.kms.business-key", name = "enabled", havingValue = "true")
+    public KmsBusinessKeyProviderReadiness kmsBusinessKeyProviderReadiness(KmsClient kmsClient,
+                                                                           CryptoProperties properties,
+                                                                           CryptoMetrics cryptoMetrics) {
+        KmsBusinessKeyProviderReadiness readiness =
+                new KmsBusinessKeyProviderReadiness(kmsClient, properties, cryptoMetrics);
+        cryptoMetrics.registerBusinessKeyProviderReadyGauge(() -> readiness.isReady() ? 1 : 0);
+        if (properties.getKms().getBusinessKey().isRequireReadyAtStartup()) {
+            readiness.verifyAtStartup();
+        }
+        return readiness;
     }
 
     /**
@@ -354,6 +383,23 @@ public class CryptoAutoConfiguration {
                 CertificateProfile.SubjectType.DEVICE_IDENTITY,
                 "EC",
                 "TBOX 设备身份证书");
+    }
+
+    /**
+     * 业务密钥 Provider 健康指示（FW-SEC-DSN-CR-011 §8.3）。
+     * capability 未 READY 时 actuator 报告 DOWN，供 VMD keyprov readiness 门禁使用。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.health.HealthIndicator.class)
+    @ConditionalOnProperty(prefix = "crypto.kms.business-key", name = "enabled", havingValue = "true")
+    public static class KmsBusinessKeyHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public KmsBusinessKeyHealthIndicator kmsBusinessKeyHealthIndicator(
+                KmsBusinessKeyProviderReadiness readiness) {
+            return new KmsBusinessKeyHealthIndicator(readiness);
+        }
     }
 
     // ==================== 内部工具 ====================

@@ -9,13 +9,16 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsRecipient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsRevocationResult;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.UuidV7;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyNotFoundException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyRevocationFailedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyWrapFailedException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
+import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyCreateRequest;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMetadata;
@@ -26,17 +29,30 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.Revocation
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrappedBusinessKey;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 /**
- * 运行期业务密钥密码学材料门面默认实现（FW-SEC-DSN-CR-009 §3/§4.5）。
+ * 运行期业务密钥密码学材料门面默认实现（FW-SEC-DSN-CR-009 §3/§4.5；FW-SEC-DSN-CR-011）。
  * <p>
  * 仅操作显式 {@link BusinessKeyRef}，委托 {@link KmsClient} 完成 create/wrap/getMetadata/revoke。
- * 创建/吊销结果未知抛 {@link CryptoOperationOutcomeUnknownException}（须原幂等键对账），
- * 不换键重建；Wrapped Key 不持久化、不进日志或事件。
+ * 每次写操作生成 UUIDv7 {@code operationId}；创建/吊销结果未知抛
+ * {@link CryptoOperationOutcomeUnknownException}（携带 operationId，须原键对账），不换键重建；
+ * Wrapped Key 不持久化、不进日志或事件。
+ * <p>
+ * DEVICE_CERT_PUBLIC_KEY 封装前，framework 先经 {@link CertResolver} 取得受信证书 DER、
+ * 计算 SHA-256 指纹并提取公钥 SPKI（RD-011-7），Provider 再校验算法与指纹。
  */
 public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTemplate {
 
@@ -45,12 +61,21 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
     private final KmsClient kmsClient;
     private final CryptoMetrics cryptoMetrics;
     private final String provider;
+    private final String runtimeKeyName;
+    private final CertResolver certResolver;
 
     public DefaultBusinessKeyMaterialTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                               CryptoProperties properties) {
+        this(kmsClient, cryptoMetrics, properties, null);
+    }
+
+    public DefaultBusinessKeyMaterialTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
+                                              CryptoProperties properties, CertResolver certResolver) {
         this.kmsClient = kmsClient;
         this.cryptoMetrics = cryptoMetrics;
         this.provider = properties.getProvisioning().getProvider();
+        this.runtimeKeyName = properties.getBusinessKey().getRuntimeKeyName();
+        this.certResolver = certResolver;
     }
 
     @Override
@@ -59,13 +84,21 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(request.bizType(), "bizType must not be null");
         Objects.requireNonNull(request.policy(), "policy must not be null");
+
+        String operationId = UuidV7.toString(UuidV7.random());
         try {
+            Instant validFrom = request.policy().validity() != null ? Instant.now() : null;
+            Instant validTo = request.policy().validity() != null
+                    ? validFrom.plus(request.policy().validity()) : null;
             KmsCreateKeyCommand command = new KmsCreateKeyCommand(
                     request.bizType().name(),
+                    operationId,
+                    request.idempotencyKey(),
                     request.policy().algorithm(),
                     request.policy().keySpec(),
-                    request.idempotencyKey(),
-                    request.auditContext());
+                    validFrom,
+                    validTo,
+                    auditContextDigest(request));
             KmsKeyMaterial material = kmsClient.createDataKey(command);
 
             long duration = System.currentTimeMillis() - startTime;
@@ -89,8 +122,8 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
             log.error("业务密钥材料创建结果未知: bizType={}, idempotencyKey={}",
                     request.bizType().name(), request.idempotencyKey(), e);
             throw new CryptoOperationOutcomeUnknownException(
-                    "创建业务密钥材料结果未知（请求可能已发送），须用原幂等键对账: idempotencyKey="
-                            + request.idempotencyKey(), e);
+                    "创建业务密钥材料结果未知（请求可能已发送），须用原 operationId/幂等键对账: operationId="
+                            + operationId, e, operationId);
         }
     }
 
@@ -112,10 +145,12 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
                     "DEVICE_ROOT_KEK 仅可在显式可信 wrappingKeyRef 下使用，不得从 deviceSn 猜测（RD-009-3）");
         }
 
+        String operationId = UuidV7.toString(UuidV7.random());
+        String idempotencyKey = context.idempotencyKey() != null ? context.idempotencyKey() : operationId;
         try {
             KmsWrappedKey wrapped = kmsClient.wrapKey(
                     new KmsKeyReference(keyRef.keyId(), keyRef.kmsKeyRef()),
-                    toKmsRecipient(recipient));
+                    toKmsRecipient(recipient), operationId, idempotencyKey);
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("业务密钥封装成功: keyId={}, mode={}, wrappedBytes={}, duration={}ms",
@@ -173,10 +208,12 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
         Objects.requireNonNull(keyRef, "keyRef must not be null");
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(request.idempotencyKey(), "idempotencyKey must not be null");
+
+        String operationId = UuidV7.toString(UuidV7.random());
         try {
             KmsRevocationResult result = kmsClient.revokeKey(
                     new KmsKeyReference(keyRef.keyId(), keyRef.kmsKeyRef()),
-                    request.reason(), request.idempotencyKey());
+                    request.reason(), request.idempotencyKey(), operationId);
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("业务密钥吊销成功: keyId={}, state={}, duration={}ms",
@@ -199,7 +236,9 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
 
     private KmsRecipient toKmsRecipient(RecipientRef recipient) {
         if (recipient instanceof RecipientRef.DeviceCertificate c) {
-            return KmsRecipient.deviceCertificate(c.certSerial());
+            byte[] certDer = resolveCertificate(c.certSerial());
+            return KmsRecipient.deviceCertificate(c.certSerial(), certDer,
+                    sha256Hex(certDer), extractSpki(certDer), null);
         }
         if (recipient instanceof RecipientRef.PublicKey p) {
             return KmsRecipient.publicKey(p.spki());
@@ -211,5 +250,65 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
             return KmsRecipient.deviceRoot(d.wrappingKeyRef());
         }
         throw new BusinessKeyWrapFailedException("未知收方类型: " + recipient.getClass().getName());
+    }
+
+    /**
+     * 经证书解析组件取得受信证书 DER（解析失败/未配置一律 fail-closed，不使用不可信输入）。
+     */
+    private byte[] resolveCertificate(String certSerial) {
+        if (certResolver == null) {
+            throw new CryptoDependencyUnavailableException(
+                    "CertResolver not configured; cannot resolve device certificate for DEVICE_CERT_PUBLIC_KEY wrap");
+        }
+        byte[] der = certResolver.resolveBySerial(certSerial);
+        if (der == null || der.length == 0) {
+            throw new CryptoDependencyUnavailableException(
+                    "Device certificate not resolvable for serial: " + certSerial);
+        }
+        return der;
+    }
+
+    private static byte[] extractSpki(byte[] certDer) {
+        try {
+            X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new ByteArrayInputStream(certDer));
+            return cert.getPublicKey().getEncoded();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("Invalid device certificate DER", e);
+        }
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new CryptoDependencyUnavailableException("SHA-256 unavailable", e);
+        }
+    }
+
+    /**
+     * 规范化业务审计上下文摘要（SHA-256），不含秘密；幂等摘要由 Provider 侧按规范化请求计算。
+     */
+    private static String auditContextDigest(BusinessKeyCreateRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("bizType=").append(request.bizType().name());
+        Map<String, String> audit = request.auditContext();
+        if (audit != null) {
+            new TreeMap<>(audit).forEach((k, v) -> sb.append('|').append(k).append('=').append(v));
+        }
+        return sha256Hex(sb.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 运行期封装的 KEK 引用（供扩展与运维核对）。
+     */
+    public String runtimeKeyName() {
+        return runtimeKeyName;
     }
 }

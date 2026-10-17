@@ -170,6 +170,18 @@ public class CryptoProperties {
         private String endpoint;
 
         /**
+         * Provider 身份（FW-SEC-DSN-CR-011 §7）。
+         * <p>
+         * 契约期望值，仅用于启动时与 capability 响应校验；不参与运行时 URL 拼接。
+         */
+        private String provider = "openbao-business-key";
+
+        /**
+         * 鉴权方式（approle；凭据经 Secret 注入，不写入普通配置明文）
+         */
+        private String auth = "approle";
+
+        /**
          * OpenBao/Vault访问令牌
          */
         private String token;
@@ -185,9 +197,22 @@ public class CryptoProperties {
         private Duration readTimeout = Duration.ofSeconds(1);
 
         /**
+         * 总预算（连接、读取与有限重试共享）
+         */
+        private Duration totalTimeout = Duration.ofSeconds(2);
+
+        /**
          * 重试次数
          */
         private int retryCount = 2;
+
+        /**
+         * 运行期业务密钥 Provider 适配配置（FW-SEC-DSN-CR-011 §7）。
+         * <p>
+         * mount/api-version/capability-path 为契约期望值，仅用于启动校验，
+         * 不参与运行时 URL 拼接或重写；任一不匹配即 fail-closed。
+         */
+        private BusinessKey businessKey = new BusinessKey();
 
         public String getEndpoint() {
             return endpoint;
@@ -195,6 +220,22 @@ public class CryptoProperties {
 
         public void setEndpoint(String endpoint) {
             this.endpoint = endpoint;
+        }
+
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
+        }
+
+        public String getAuth() {
+            return auth;
+        }
+
+        public void setAuth(String auth) {
+            this.auth = auth;
         }
 
         public String getToken() {
@@ -221,12 +262,113 @@ public class CryptoProperties {
             this.readTimeout = readTimeout;
         }
 
+        public Duration getTotalTimeout() {
+            return totalTimeout;
+        }
+
+        public void setTotalTimeout(Duration totalTimeout) {
+            this.totalTimeout = totalTimeout;
+        }
+
         public int getRetryCount() {
             return retryCount;
         }
 
         public void setRetryCount(int retryCount) {
             this.retryCount = retryCount;
+        }
+
+        public BusinessKey getBusinessKey() {
+            return businessKey;
+        }
+
+        public void setBusinessKey(BusinessKey businessKey) {
+            this.businessKey = businessKey;
+        }
+
+        /**
+         * 运行期业务密钥 Provider 适配配置（crypto.kms.business-key.*）。
+         * <p>
+         * 只控制 Provider 适配；公共门面仍由 {@code crypto.business-key.enabled} 控制。
+         */
+        public static class BusinessKey {
+            /**
+             * 是否启用 Provider 适配（能力探测/启动门禁/Health）
+             */
+            private boolean enabled = false;
+
+            /**
+             * mount 契约期望值（启动校验，不参与 URL 拼接）
+             */
+            private String mount = "business-key";
+
+            /**
+             * API 版本契约期望值（启动校验，不参与 URL 拼接）
+             */
+            private String apiVersion = "v1";
+
+            /**
+             * capability 路径契约期望值（启动校验；wire 路径固定为 /v1/business-key/capabilities）
+             */
+            private String capabilityPath = "/v1/business-key/capabilities";
+
+            /**
+             * 启动时是否要求 capability READY；未 READY 则启动 fail-closed
+             */
+            private boolean requireReadyAtStartup = true;
+
+            /**
+             * 是否启用对账语义（operationId/幂等键）
+             */
+            private boolean reconcileEnabled = true;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getMount() {
+                return mount;
+            }
+
+            public void setMount(String mount) {
+                this.mount = mount;
+            }
+
+            public String getApiVersion() {
+                return apiVersion;
+            }
+
+            public void setApiVersion(String apiVersion) {
+                this.apiVersion = apiVersion;
+            }
+
+            public String getCapabilityPath() {
+                return capabilityPath;
+            }
+
+            public void setCapabilityPath(String capabilityPath) {
+                this.capabilityPath = capabilityPath;
+            }
+
+            public boolean isRequireReadyAtStartup() {
+                return requireReadyAtStartup;
+            }
+
+            public void setRequireReadyAtStartup(boolean requireReadyAtStartup) {
+                this.requireReadyAtStartup = requireReadyAtStartup;
+            }
+
+            public boolean isReconcileEnabled() {
+                return reconcileEnabled;
+            }
+
+            public void setReconcileEnabled(boolean reconcileEnabled) {
+                this.reconcileEnabled = reconcileEnabled;
+            }
         }
     }
 

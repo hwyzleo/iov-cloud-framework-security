@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,17 +48,27 @@ public interface KmsFeignClient {
     @PostMapping("/v1/transit/keys/{keyName}")
     FeignKmsClient.PublicKeyResponse getPublicKey(@PathVariable("keyName") String keyName, @RequestBody FeignKmsClient.PublicKeyRequest request);
 
-    // ==================== 业务密钥材料（FW-SEC-DSN-CR-009 §9） ====================
+    // ==================== 业务密钥材料 Provider（FW-SEC-DSN-CR-011 §6 冻结 wire contract） ====================
+    // 路径固定为 /v1/business-key/...；mount/api-version/capability-path 仅为启动校验的契约期望值，
+    // 不参与运行时 URL 拼接或重写。禁止再使用 /v1/transit/business-key/*（虚构路径）。
 
-    @PostMapping("/v1/transit/business-key/create")
+    @PostMapping("/v1/business-key/keys")
     FeignKmsClient.CreateBusinessKeyResponse createBusinessKey(@RequestBody FeignKmsClient.CreateBusinessKeyRequest request);
 
-    @PostMapping("/v1/transit/business-key/wrap")
-    FeignKmsClient.WrapBusinessKeyResponse wrapBusinessKey(@RequestBody FeignKmsClient.WrapBusinessKeyRequest request);
+    @PostMapping("/v1/business-key/keys/{keyId}/wrap")
+    FeignKmsClient.WrapBusinessKeyResponse wrapBusinessKey(@PathVariable("keyId") String keyId,
+                                                           @RequestBody FeignKmsClient.WrapBusinessKeyRequest request);
 
-    @PostMapping("/v1/transit/business-key/metadata")
-    FeignKmsClient.BusinessKeyMetadataResponse getBusinessKeyMetadata(@RequestBody FeignKmsClient.BusinessKeyMetadataRequest request);
+    @GetMapping("/v1/business-key/keys/{keyId}")
+    FeignKmsClient.BusinessKeyMetadataResponse getBusinessKeyMetadata(@PathVariable("keyId") String keyId);
 
-    @PostMapping("/v1/transit/business-key/revoke")
-    FeignKmsClient.RevokeBusinessKeyResponse revokeBusinessKey(@RequestBody FeignKmsClient.RevokeBusinessKeyRequest request);
+    @PostMapping("/v1/business-key/keys/{keyId}/revoke")
+    FeignKmsClient.RevokeBusinessKeyResponse revokeBusinessKey(@PathVariable("keyId") String keyId,
+                                                               @RequestBody FeignKmsClient.RevokeBusinessKeyRequest request);
+
+    @GetMapping("/v1/business-key/operations/{operationId}")
+    FeignKmsClient.OperationResponse getBusinessKeyOperation(@PathVariable("operationId") String operationId);
+
+    @GetMapping("/v1/business-key/capabilities")
+    FeignKmsClient.CapabilitiesResponse getBusinessKeyCapabilities();
 }

@@ -8,11 +8,28 @@ package net.hwyz.iov.cloud.framework.security.crypto.exception;
  */
 public class CryptoOperationOutcomeUnknownException extends CryptoException {
 
+    private final String operationId;
+
     public CryptoOperationOutcomeUnknownException(String message) {
-        super(Reason.CRYPTO_OPERATION_OUTCOME_UNKNOWN, message);
+        this(message, null, null);
     }
 
     public CryptoOperationOutcomeUnknownException(String message, Throwable cause) {
+        this(message, cause, null);
+    }
+
+    /**
+     * @param operationId 客户端生成的 UUIDv7 操作标识；调用方须以原 operationId/幂等键对账
+     */
+    public CryptoOperationOutcomeUnknownException(String message, Throwable cause, String operationId) {
         super(Reason.CRYPTO_OPERATION_OUTCOME_UNKNOWN, message, cause);
+        this.operationId = operationId;
+    }
+
+    /**
+     * 用于对账的 operationId；未携带时为 null。
+     */
+    public String getOperationId() {
+        return operationId;
     }
 }
