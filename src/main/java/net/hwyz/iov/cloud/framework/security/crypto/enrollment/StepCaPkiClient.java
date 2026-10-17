@@ -189,8 +189,11 @@ public class StepCaPkiClient implements PkiClient {
             chainValidator.validateIssued(leafDer, chainDer, command.csr(), policy, rootSha256);
 
             X509Certificate leaf = CertPem.parseCertificate(leafDer);
+            // 序列号统一为 canonical 十六进制（去分隔符/去 0x/去前导零/小写），与
+            // CertificateEvidenceValidator/PkiClient 的 evidence 口径一致；
+            // 禁止使用 BigInteger.toString()（十进制），否则下游按 hex 比对必然不一致。
             IssuedCertificate issued = new IssuedCertificate(
-                    leafDer, chainDer, leaf.getSerialNumber().toString(),
+                    leafDer, chainDer, PkiClient.canonicalSerial(leaf.getSerialNumber().toString(16)),
                     leaf.getNotBefore().toInstant(), leaf.getNotAfter().toInstant(),
                     EnrollmentRecord.fingerprintHex(leafDer));
             resultStore.markIssued(requestId, issued);

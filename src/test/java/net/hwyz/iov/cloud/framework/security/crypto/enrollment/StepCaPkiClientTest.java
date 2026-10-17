@@ -10,8 +10,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.EnrollmentState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +86,31 @@ class StepCaPkiClientTest {
         // 幂等索引
         assertEquals("req-1", store.findByIdempotency("vmd", "idem-1").orElseThrow().requestId());
         verify(metrics).recordEnrollmentOutcome("step-ca", "issued");
+    }
+
+    @Test
+    void submit_shouldPersistCanonicalHexSerial_whenSerialHasNonDecimalDigits() throws Exception {
+        // 回归：IssuedCertificate.serialNumber 必须与证书证据校验口径一致（hex canonical）。
+        // 历史实现使用 BigInteger.toString()（十进制），会让下游按 PkiClient.canonicalSerial（hex）
+        // 落库/比对的 cert_sn 与 framework 按 DER 计算的 hex serial 不一致，Wrap 时被判证书证据冲突。
+        X509Certificate leaf = TestPkiMaterial.issueLeaf(
+                TestPkiMaterial.INTERMEDIATE_SUBJECT, material.intermediateKeyPair(),
+                TestPkiMaterial.LEAF_SUBJECT, material.leafKeyPair().getPublic(),
+                new BigInteger("ABCDEF", 16), true, "TBOX-00000000000000000000000000000001");
+        when(apiClient.sign(any())).thenReturn(new StepCaApiClient.StepCaSignResponse(
+                TestPkiMaterial.pem("CERTIFICATE", leaf.getEncoded()),
+                List.of(
+                        TestPkiMaterial.pem("CERTIFICATE", material.intermediateCert().getEncoded()),
+                        TestPkiMaterial.pem("CERTIFICATE", material.rootCert().getEncoded()))));
+
+        client.submit(command("req-hex", "idem-hex"));
+
+        String persisted = store.findByRequestId("req-hex").orElseThrow().serialNumber();
+        // 与 framework 证据口径（按 DER 计算的 hex canonical）一致
+        assertEquals(PkiClient.canonicalSerial(leaf.getSerialNumber().toString(16)), persisted);
+        assertEquals("abcdef", persisted);
+        // 不得为十进制表示（旧实现会写成 "11259375"）
+        assertNotEquals(leaf.getSerialNumber().toString(), persisted);
     }
 
     @Test
