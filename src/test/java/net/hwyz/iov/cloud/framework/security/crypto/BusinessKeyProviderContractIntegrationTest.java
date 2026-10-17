@@ -22,6 +22,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.Revocation
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.EvidenceSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -64,7 +68,9 @@ class BusinessKeyProviderContractIntegrationTest {
         configuration = new CryptoAutoConfiguration();
 
         leafCertDer = TestPkiMaterial.generate().leafCert().getEncoded();
-        when(certResolver.resolveBySerial("cert-001")).thenReturn(leafCertDer);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromCertificateDer(
+                        leafCertDer, EvidenceSource.PROVIDER_QUERY));
 
         kmsClient = new FeignKmsClient(properties, kmsFeignClient, cryptoMetrics);
         template = new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties, certResolver);

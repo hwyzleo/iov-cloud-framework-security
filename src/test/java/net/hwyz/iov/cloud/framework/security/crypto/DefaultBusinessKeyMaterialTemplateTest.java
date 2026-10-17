@@ -28,6 +28,11 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.Revocation
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.EvidenceSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -63,7 +68,9 @@ class DefaultBusinessKeyMaterialTemplateTest {
         if (leafCertDer == null) {
             leafCertDer = TestPkiMaterial.generate().leafCert().getEncoded();
         }
-        when(certResolver.resolveBySerial("cert-001")).thenReturn(leafCertDer);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromCertificateDer(
+                        leafCertDer, EvidenceSource.PROVIDER_QUERY));
         template = new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties, certResolver);
     }
 
@@ -143,7 +150,7 @@ class DefaultBusinessKeyMaterialTemplateTest {
 
         assertNotNull(wrapped);
         assertArrayEquals(new byte[]{1, 2, 3}, wrapped.wrapped());
-        verify(certResolver).resolveBySerial("cert-001");
+        verify(certResolver).resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class));
         verify(kmsClient).wrapKey(eq(new KmsKeyReference("k-1", "bk/k-1")),
                 argThat(r -> r.mode() == WrapMode.DEVICE_CERT_PUBLIC_KEY
                         && "cert-001".equals(r.certSerial())

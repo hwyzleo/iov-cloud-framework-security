@@ -5,6 +5,11 @@ import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnvelopedData;
 import net.hwyz.iov.cloud.framework.security.crypto.model.Recipient;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateSubjectRef;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.EvidenceSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -96,50 +101,64 @@ class DefaultCertEncryptionTemplateTest {
     @Test
     void encryptFor_subjectVin_callsCertResolver() throws Exception {
         byte[] pubKey = generateEcPublicKey();
-        when(certResolver.resolveByVin("VIN123")).thenReturn(pubKey);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromSpki(pubKey, null, EvidenceSource.DOMAIN_DIRECTORY));
 
         Recipient recipient = Recipient.ofVehicle("VIN123");
         EnvelopedData result = template.encryptFor(recipient, "hello".getBytes());
 
         assertNotNull(result);
         assertEquals(EnvelopedData.EncAlg.ECIES_AES_256_GCM, result.alg());
-        verify(certResolver).resolveByVin("VIN123");
+        verify(certResolver).resolve(argThat(ref -> ref.subject() != null
+                        && ref.subject().type() == CertificateSubjectRef.Type.VEHICLE
+                        && "VIN123".equals(ref.subject().value())),
+                any(CertificateResolvePolicy.class));
     }
 
     @Test
     void encryptFor_subjectDevice_callsCertResolver() throws Exception {
         byte[] pubKey = generateEcPublicKey();
-        when(certResolver.resolveByDeviceSn("SN123")).thenReturn(pubKey);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromSpki(pubKey, null, EvidenceSource.DOMAIN_DIRECTORY));
 
         Recipient recipient = Recipient.ofDevice("SN123");
         EnvelopedData result = template.encryptFor(recipient, "hello".getBytes());
 
         assertNotNull(result);
-        verify(certResolver).resolveByDeviceSn("SN123");
+        verify(certResolver).resolve(argThat(ref -> ref.subject() != null
+                        && ref.subject().type() == CertificateSubjectRef.Type.DEVICE
+                        && "SN123".equals(ref.subject().value())),
+                any(CertificateResolvePolicy.class));
     }
 
     @Test
     void encryptFor_subjectSerial_callsCertResolver() throws Exception {
         byte[] pubKey = generateEcPublicKey();
-        when(certResolver.resolveBySerial("CERT-001")).thenReturn(pubKey);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromSpki(pubKey, null, EvidenceSource.PROVIDER_QUERY));
 
         Recipient recipient = Recipient.ofSerial("CERT-001");
         EnvelopedData result = template.encryptFor(recipient, "hello".getBytes());
 
         assertNotNull(result);
-        verify(certResolver).resolveBySerial("CERT-001");
+        verify(certResolver).resolve(argThat(ref -> "CERT-001".equals(ref.certSerial())),
+                any(CertificateResolvePolicy.class));
     }
 
     @Test
     void encryptFor_subjectUser_callsCertResolver() throws Exception {
         byte[] pubKey = generateEcPublicKey();
-        when(certResolver.resolveByUid("UID123")).thenReturn(pubKey);
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
+                .thenReturn(CertificateEvidenceValidator.fromSpki(pubKey, null, EvidenceSource.DOMAIN_DIRECTORY));
 
         Recipient recipient = Recipient.ofUser("UID123");
         EnvelopedData result = template.encryptFor(recipient, "hello".getBytes());
 
         assertNotNull(result);
-        verify(certResolver).resolveByUid("UID123");
+        verify(certResolver).resolve(argThat(ref -> ref.subject() != null
+                        && ref.subject().type() == CertificateSubjectRef.Type.USER
+                        && "UID123".equals(ref.subject().value())),
+                any(CertificateResolvePolicy.class));
     }
 
     // ==================== encryptFor null checks ====================
@@ -160,7 +179,7 @@ class DefaultCertEncryptionTemplateTest {
 
     @Test
     void encryptFor_certResolverThrows_failClosed() {
-        when(certResolver.resolveByVin(any()))
+        when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
                 .thenThrow(new net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException("PKI down"));
 
         assertThrows(CryptoException.class,

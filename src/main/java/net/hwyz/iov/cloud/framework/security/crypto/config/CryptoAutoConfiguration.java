@@ -45,10 +45,15 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaTokenProvid
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CertificateProfile;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateReferenceDirectory;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolutionHealthIndicator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolutionValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.revocation.CertificateStatusChecker;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultCertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DefaultDeviceResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.FailClosedCertResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -144,9 +149,10 @@ public class CryptoAutoConfiguration {
     public BusinessKeyMaterialTemplate businessKeyMaterialTemplate(KmsClient kmsClient,
                                                                    CryptoMetrics cryptoMetrics,
                                                                    CryptoProperties properties,
-                                                                   ObjectProvider<CertResolver> certResolverProvider) {
+                                                                   ObjectProvider<CertResolver> certResolverProvider,
+                                                                   ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider) {
         return new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties,
-                certResolverProvider.getIfAvailable());
+                certResolverProvider.getIfAvailable(), evidenceValidatorProvider.getIfAvailable());
     }
 
     /**
@@ -224,16 +230,48 @@ public class CryptoAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public CertResolver certResolver() {
-        return new DefaultCertResolver();
+    public CertificateEvidenceValidator certificateEvidenceValidator(
+            ObjectProvider<PkiClient> pkiClientProvider, CryptoProperties properties) {
+        return new CertificateEvidenceValidator(pkiClientProvider, properties);
+    }
+
+    /**
+     * 证书解析门面（FW-SEC-DSN-CR-012 §5/§8）：
+     * 启用 {@code crypto.pki.certificate-resolution.enabled=true} 且无自定义 Bean 时装配默认解析编排；
+     * 否则装配 fail-closed 实现（不创建可误用的 Noop / 放行实现）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public CertResolver certResolver(CryptoProperties properties,
+                                     CryptoMetrics cryptoMetrics,
+                                     ObjectProvider<CertificateEnrollmentResultStore> resultStoreProvider,
+                                     ObjectProvider<CertEnrollmentTemplate> enrollmentTemplateProvider,
+                                     ObjectProvider<PkiClient> pkiClientProvider,
+                                     ObjectProvider<CertificateReferenceDirectory> directoryProvider,
+                                     Environment environment) {
+        CryptoProperties.Pki.CertificateResolution config = properties.getPki().getCertificateResolution();
+        if (!config.isEnabled()) {
+            return new FailClosedCertResolver();
+        }
+        boolean revocationEnabled = Boolean.TRUE.equals(
+                environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false));
+        CertificateResolutionValidator.validate(properties, revocationEnabled);
+        log.info("证书解析门面装配完成: providerQuery={}, domainDirectory={}, trustAnchorsConfigured={}",
+                config.isProviderQueryEnabled(), config.isDomainDirectoryEnabled(),
+                config.getTrustAnchorsPem() != null && !config.getTrustAnchorsPem().isBlank());
+        return new DefaultCertResolver(resultStoreProvider,
+                enrollmentTemplateProvider, pkiClientProvider, directoryProvider, properties,
+                cryptoMetrics);
     }
 
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "crypto.pki", name = "endpoint")
     public CertEncryptionTemplate certEncryptionTemplate(CryptoMetrics cryptoMetrics,
-                                                           ObjectProvider<CertResolver> certResolverProvider) {
-        return new DefaultCertEncryptionTemplate(cryptoMetrics, certResolverProvider.getIfAvailable());
+                                                           ObjectProvider<CertResolver> certResolverProvider,
+                                                           ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider) {
+        return new DefaultCertEncryptionTemplate(cryptoMetrics, certResolverProvider.getIfAvailable(),
+                evidenceValidatorProvider.getIfAvailable());
     }
 
     // ==================== 证书注册：结果存储（FW-SEC-DSN-CR-008 §5.1） ====================
@@ -399,6 +437,30 @@ public class CryptoAutoConfiguration {
         public KmsBusinessKeyHealthIndicator kmsBusinessKeyHealthIndicator(
                 KmsBusinessKeyProviderReadiness readiness) {
             return new KmsBusinessKeyHealthIndicator(readiness);
+        }
+    }
+
+    /**
+     * 证书解析能力健康（FW-SEC-DSN-CR-012 §8）：启用解析能力时暴露配置缺口（如缺信任锚）为 NOT_READY。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.health.HealthIndicator.class)
+    @ConditionalOnProperty(prefix = "crypto.pki.certificate-resolution", name = "enabled", havingValue = "true")
+    public static class CertificateResolutionHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public CertificateResolutionHealthIndicator certificateResolutionHealthIndicator(
+                CryptoProperties properties, Environment environment,
+                ObjectProvider<CertificateEnrollmentResultStore> resultStoreProvider,
+                ObjectProvider<PkiClient> pkiClientProvider,
+                ObjectProvider<CertificateReferenceDirectory> directoryProvider) {
+            boolean revocationEnabled = Boolean.TRUE.equals(
+                    environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false));
+            return new CertificateResolutionHealthIndicator(properties, revocationEnabled,
+                    resultStoreProvider.getIfAvailable() != null,
+                    pkiClientProvider.getIfAvailable() != null,
+                    directoryProvider.getIfAvailable() != null);
         }
     }
 

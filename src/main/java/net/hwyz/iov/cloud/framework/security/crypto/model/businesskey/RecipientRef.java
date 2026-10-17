@@ -1,6 +1,8 @@
 package net.hwyz.iov.cloud.framework.security.crypto.model.businesskey;
 
 import java.io.Serializable;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 收方引用（FW-SEC-DSN-CR-009 §3）。
@@ -16,11 +18,46 @@ import java.io.Serializable;
 public sealed interface RecipientRef extends Serializable {
 
     /**
-     * 按设备证书序列号取收方证书公钥封装（首期 keyprov 模式）。
+     * 按设备证书取收方证书公钥封装（首期 keyprov 模式）。
+     * <p>
+     * 向后兼容仅传 {@code certSerial}；也可携带 {@code requestId}、leaf DER、SPKI、
+     * SHA-256 fingerprint 与必要上下文（FW-SEC-DSN-CR-012 §4.3）。
+     * fingerprint 仅用于固定/比对，不能单独替代 Wrap 所需的 DER/SPKI。
      *
-     * @param certSerial 设备证书序列号
+     * @param certSerial        证书序列号（可空，向后兼容）
+     * @param requestId         证书注册 requestId（可空）
+     * @param certificateDer    叶子证书 DER（可空）
+     * @param spki              收方公钥 SPKI DER（可空）
+     * @param sha256Fingerprint 期望 SHA-256 指纹（可空）
+     * @param context           非安全扩展上下文（可空）
      */
-    record DeviceCertificate(String certSerial) implements RecipientRef {
+    record DeviceCertificate(String certSerial, String requestId, byte[] certificateDer, byte[] spki,
+                             String sha256Fingerprint, Map<String, String> context) implements RecipientRef {
+
+        public DeviceCertificate {
+            certificateDer = certificateDer == null ? null : certificateDer.clone();
+            spki = spki == null ? null : spki.clone();
+            context = context == null ? Map.of() : Map.copyOf(new LinkedHashMap<>(context));
+        }
+
+        /**
+         * 向后兼容构造：仅传序列号。
+         */
+        public DeviceCertificate(String certSerial) {
+            this(certSerial, null, null, null, null, null);
+        }
+
+        public static DeviceCertificate ofCertificate(byte[] certificateDer) {
+            return new DeviceCertificate(null, null, certificateDer, null, null, null);
+        }
+
+        public static DeviceCertificate ofSpki(byte[] spki) {
+            return new DeviceCertificate(null, null, null, spki, null, null);
+        }
+
+        public static DeviceCertificate ofRequestId(String requestId) {
+            return new DeviceCertificate(null, requestId, null, null, null, null);
+        }
     }
 
     /**

@@ -30,14 +30,15 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapContex
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrappedBusinessKey;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
@@ -60,22 +61,32 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
 
     private final KmsClient kmsClient;
     private final CryptoMetrics cryptoMetrics;
+    private final CryptoProperties properties;
     private final String provider;
     private final String runtimeKeyName;
     private final CertResolver certResolver;
+    private final CertificateEvidenceValidator evidenceValidator;
 
     public DefaultBusinessKeyMaterialTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                               CryptoProperties properties) {
-        this(kmsClient, cryptoMetrics, properties, null);
+        this(kmsClient, cryptoMetrics, properties, null, null);
     }
 
     public DefaultBusinessKeyMaterialTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                               CryptoProperties properties, CertResolver certResolver) {
+        this(kmsClient, cryptoMetrics, properties, certResolver, null);
+    }
+
+    public DefaultBusinessKeyMaterialTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
+                                              CryptoProperties properties, CertResolver certResolver,
+                                              CertificateEvidenceValidator evidenceValidator) {
         this.kmsClient = kmsClient;
         this.cryptoMetrics = cryptoMetrics;
+        this.properties = properties;
         this.provider = properties.getProvisioning().getProvider();
         this.runtimeKeyName = properties.getBusinessKey().getRuntimeKeyName();
         this.certResolver = certResolver;
+        this.evidenceValidator = evidenceValidator;
     }
 
     @Override
@@ -236,9 +247,11 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
 
     private KmsRecipient toKmsRecipient(RecipientRef recipient) {
         if (recipient instanceof RecipientRef.DeviceCertificate c) {
-            byte[] certDer = resolveCertificate(c.certSerial());
-            return KmsRecipient.deviceCertificate(c.certSerial(), certDer,
-                    sha256Hex(certDer), extractSpki(certDer), null);
+            CertificateEvidence evidence = resolveDeviceCertificate(c);
+            String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
+                    ? c.certSerial() : evidence.serial();
+            return KmsRecipient.deviceCertificate(certSerial, evidence.certificateDer(),
+                    evidence.sha256Fingerprint(), evidence.spki(), null);
         }
         if (recipient instanceof RecipientRef.PublicKey p) {
             return KmsRecipient.publicKey(p.spki());
@@ -253,29 +266,33 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
     }
 
     /**
-     * 经证书解析组件取得受信证书 DER（解析失败/未配置一律 fail-closed，不使用不可信输入）。
+     * 经门面统一证书解析（FW-SEC-DSN-CR-012）：按证据优先级取得并校验受信证书 DER/SPKI/指纹，
+     * 任一环节缺失、冲突或状态不可用一律 fail-closed，不使用不可信输入。
      */
-    private byte[] resolveCertificate(String certSerial) {
+    private CertificateEvidence resolveDeviceCertificate(RecipientRef.DeviceCertificate c) {
         if (certResolver == null) {
             throw new CryptoDependencyUnavailableException(
                     "CertResolver not configured; cannot resolve device certificate for DEVICE_CERT_PUBLIC_KEY wrap");
         }
-        byte[] der = certResolver.resolveBySerial(certSerial);
-        if (der == null || der.length == 0) {
-            throw new CryptoDependencyUnavailableException(
-                    "Device certificate not resolvable for serial: " + certSerial);
+        DeviceCertificateRef ref = new DeviceCertificateRef(c.certSerial(), c.requestId(),
+                c.certificateDer(), c.spki(), c.sha256Fingerprint(), null, c.context());
+        CertificateResolvePolicy policy = businessKeyWrapPolicy();
+        CertificateEvidence evidence = certResolver.resolve(ref, policy);
+        if (evidenceValidator != null) {
+            evidence = evidenceValidator.validate(evidence, ref, policy);
         }
-        return der;
+        if (!evidence.hasLeafDer() && !evidence.hasSpki()) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved certificate evidence lacks DER/SPKI for DEVICE_CERT_PUBLIC_KEY wrap");
+        }
+        return evidence;
     }
 
-    private static byte[] extractSpki(byte[] certDer) {
-        try {
-            X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(certDer));
-            return cert.getPublicKey().getEncoded();
-        } catch (Exception e) {
-            throw new CryptoDependencyUnavailableException("Invalid device certificate DER", e);
-        }
+    private CertificateResolvePolicy businessKeyWrapPolicy() {
+        CryptoProperties.Pki.BusinessKeyWrap config = properties.getPki().getCertificateResolution()
+                .getBusinessKeyWrap();
+        return CertificateResolvePolicy.businessKeyWrap(config.isRequireCertificate(),
+                config.isRequireTrustedChain(), config.isRequireGoodStatus());
     }
 
     private static String sha256Hex(byte[] data) {

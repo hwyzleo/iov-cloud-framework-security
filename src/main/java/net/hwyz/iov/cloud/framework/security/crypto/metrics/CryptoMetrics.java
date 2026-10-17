@@ -495,6 +495,33 @@ public class CryptoMetrics {
     }
 
     /**
+     * 记录证书解析结果与来源（FW-SEC-DSN-CR-012 §11）。
+     * <p>
+     * source 仅使用固定枚举（inline-der / inline-spki / enrollment-store / provider-query /
+     * domain-directory），禁止高基数或敏感标签。
+     *
+     * @param source   证据来源
+     * @param duration 耗时（毫秒）
+     */
+    public void recordCertificateResolution(String source, long duration) {
+        String normalized = normalizeEvidenceSource(source);
+        meterRegistry.counter("crypto.cert-resolution.count", "source", normalized).increment();
+        Timer.builder("crypto.cert-resolution.latency")
+                .description("证书解析时延")
+                .tag("source", normalized)
+                .register(meterRegistry)
+                .record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录证书解析失败（reason 仅使用固定枚举）。
+     */
+    public void recordCertificateResolutionFailure(String reason) {
+        meterRegistry.counter("crypto.cert-resolution.failure.count",
+                "reason", normalizeCertificateResolutionReason(reason)).increment();
+    }
+
+    /**
      * 记录 provider × outcome 维度证书申请结果（FW-SEC-DSN-CR-008 §8）。
      * outcome 仅使用固定枚举（issued/rejected/failed/unknown/pending）。
      */
@@ -503,6 +530,33 @@ public class CryptoMetrics {
         String normalizedOutcome = normalizeOutcome(outcome);
         meterRegistry.counter("crypto.enrollment.outcome.count",
                 "provider", normalized, "outcome", normalizedOutcome).increment();
+    }
+
+    private static String normalizeEvidenceSource(String source) {
+        if (source == null) {
+            return "unknown";
+        }
+        return switch (source.trim().toLowerCase()) {
+            case "inline_der" -> "inline-der";
+            case "inline_spki" -> "inline-spki";
+            case "enrollment_store" -> "enrollment-store";
+            case "provider_query" -> "provider-query";
+            case "domain_directory" -> "domain-directory";
+            default -> "unknown";
+        };
+    }
+
+    private static String normalizeCertificateResolutionReason(String reason) {
+        if (reason == null) {
+            return "unknown";
+        }
+        return switch (reason.trim().toLowerCase()) {
+            case "material_unavailable", "certificate_material_unavailable" -> "material-unavailable";
+            case "evidence_mismatch", "certificate_evidence_mismatch" -> "evidence-mismatch";
+            case "reference_ambiguous", "certificate_reference_ambiguous" -> "reference-ambiguous";
+            case "dependency_unavailable", "crypto_dependency_unavailable" -> "dependency-unavailable";
+            default -> "unknown";
+        };
     }
 
     private static String normalizeBusinessKeyOperation(String operation) {

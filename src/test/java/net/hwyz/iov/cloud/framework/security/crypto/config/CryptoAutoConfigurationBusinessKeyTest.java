@@ -45,7 +45,7 @@ class CryptoAutoConfigurationBusinessKeyTest {
     @Test
     void businessKeyMaterialTemplate_enabled_assemblesDefaultImpl() {
         BusinessKeyMaterialTemplate template = configuration.businessKeyMaterialTemplate(
-                kmsClient, cryptoMetrics, properties, providerOf(null));
+                kmsClient, cryptoMetrics, properties, providerOf(null), providerOf(null));
         assertTrue(template instanceof DefaultBusinessKeyMaterialTemplate);
     }
 

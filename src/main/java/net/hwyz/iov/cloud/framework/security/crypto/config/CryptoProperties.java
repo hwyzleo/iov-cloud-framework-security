@@ -604,6 +604,11 @@ public class CryptoProperties {
          */
         private Tls tls = new Tls();
 
+        /**
+         * 证书材料解析配置（FW-SEC-DSN-CR-012 §8）。
+         */
+        private CertificateResolution certificateResolution = new CertificateResolution();
+
         public String getEndpoint() {
             return endpoint;
         }
@@ -674,6 +679,14 @@ public class CryptoProperties {
 
         public void setTls(Tls tls) {
             this.tls = tls;
+        }
+
+        public CertificateResolution getCertificateResolution() {
+            return certificateResolution;
+        }
+
+        public void setCertificateResolution(CertificateResolution certificateResolution) {
+            this.certificateResolution = certificateResolution;
         }
 
         /**
@@ -1004,6 +1017,150 @@ public class CryptoProperties {
 
             public void setSubjectRule(String subjectRule) {
                 this.subjectRule = subjectRule;
+            }
+        }
+
+        /**
+         * 证书材料解析配置（FW-SEC-DSN-CR-012 §8）。
+         * <p>
+         * 前缀 {@code crypto.pki.certificate-resolution}。默认关闭，避免升级 framework 后改变既有行为。
+         * 信任锚必须显式配置 {@code trust-anchors-pem}，不接受从 TLS 传输信任或吊销查询 issuer 隐式回退。
+         */
+        public static class CertificateResolution {
+            /**
+             * 是否启用 framework 默认证书解析编排
+             */
+            private boolean enabled = false;
+
+            /**
+             * 是否优先使用调用方携带的 inline DER/SPKI
+             */
+            private boolean inlineFirst = true;
+
+            /**
+             * 是否允许按 Provider serial 查询（仅 capability 支持时真正生效）
+             */
+            private boolean providerQueryEnabled = true;
+
+            /**
+             * 是否允许领域目录 locator
+             */
+            private boolean domainDirectoryEnabled = true;
+
+            /**
+             * 多个目录命中不同 locator 时是否必须唯一（true 则拒绝）
+             */
+            private boolean requireUniqueResult = true;
+
+            /**
+             * 业务证书签发信任锚 PEM（可含多张）。启用解析能力且要求受信链时必须显式配置。
+             */
+            private String trustAnchorsPem;
+
+            /**
+             * 业务密钥封装场景策略
+             */
+            private BusinessKeyWrap businessKeyWrap = new BusinessKeyWrap();
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public boolean isInlineFirst() {
+                return inlineFirst;
+            }
+
+            public void setInlineFirst(boolean inlineFirst) {
+                this.inlineFirst = inlineFirst;
+            }
+
+            public boolean isProviderQueryEnabled() {
+                return providerQueryEnabled;
+            }
+
+            public void setProviderQueryEnabled(boolean providerQueryEnabled) {
+                this.providerQueryEnabled = providerQueryEnabled;
+            }
+
+            public boolean isDomainDirectoryEnabled() {
+                return domainDirectoryEnabled;
+            }
+
+            public void setDomainDirectoryEnabled(boolean domainDirectoryEnabled) {
+                this.domainDirectoryEnabled = domainDirectoryEnabled;
+            }
+
+            public boolean isRequireUniqueResult() {
+                return requireUniqueResult;
+            }
+
+            public void setRequireUniqueResult(boolean requireUniqueResult) {
+                this.requireUniqueResult = requireUniqueResult;
+            }
+
+            public String getTrustAnchorsPem() {
+                return trustAnchorsPem;
+            }
+
+            public void setTrustAnchorsPem(String trustAnchorsPem) {
+                this.trustAnchorsPem = trustAnchorsPem;
+            }
+
+            public BusinessKeyWrap getBusinessKeyWrap() {
+                return businessKeyWrap;
+            }
+
+            public void setBusinessKeyWrap(BusinessKeyWrap businessKeyWrap) {
+                this.businessKeyWrap = businessKeyWrap;
+            }
+        }
+
+        /**
+         * 业务密钥 DEVICE_CERT_PUBLIC_KEY 封装场景证书解析策略。
+         */
+        public static class BusinessKeyWrap {
+            /**
+             * 是否必须取得叶子证书 DER
+             */
+            private boolean requireCertificate = true;
+
+            /**
+             * 是否要求证书链可验证到配置信任锚
+             */
+            private boolean requireTrustedChain = true;
+
+            /**
+             * 是否要求吊销状态为 GOOD（UNKNOWN 视为不可用）。
+             * 为 true 时必须同时启用 {@code crypto.pki.revocation.enabled}；dev/test 可显式关闭。
+             */
+            private boolean requireGoodStatus = true;
+
+            public boolean isRequireCertificate() {
+                return requireCertificate;
+            }
+
+            public void setRequireCertificate(boolean requireCertificate) {
+                this.requireCertificate = requireCertificate;
+            }
+
+            public boolean isRequireTrustedChain() {
+                return requireTrustedChain;
+            }
+
+            public void setRequireTrustedChain(boolean requireTrustedChain) {
+                this.requireTrustedChain = requireTrustedChain;
+            }
+
+            public boolean isRequireGoodStatus() {
+                return requireGoodStatus;
+            }
+
+            public void setRequireGoodStatus(boolean requireGoodStatus) {
+                this.requireGoodStatus = requireGoodStatus;
             }
         }
 

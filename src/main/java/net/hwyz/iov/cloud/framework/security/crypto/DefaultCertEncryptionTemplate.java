@@ -2,11 +2,17 @@ package net.hwyz.iov.cloud.framework.security.crypto;
 
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.EciesCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.RsaOaepCipher;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnvelopedData;
 import net.hwyz.iov.cloud.framework.security.crypto.model.Recipient;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateSubjectRef;
+import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,12 +44,19 @@ public class DefaultCertEncryptionTemplate implements CertEncryptionTemplate {
     private final RsaOaepCipher rsaOaepCipher;
     private final CryptoMetrics cryptoMetrics;
     private final CertResolver certResolver;
+    private final CertificateEvidenceValidator evidenceValidator;
 
     public DefaultCertEncryptionTemplate(CryptoMetrics cryptoMetrics, CertResolver certResolver) {
+        this(cryptoMetrics, certResolver, null);
+    }
+
+    public DefaultCertEncryptionTemplate(CryptoMetrics cryptoMetrics, CertResolver certResolver,
+                                         CertificateEvidenceValidator evidenceValidator) {
         this.eciesCipher = new EciesCipher();
         this.rsaOaepCipher = new RsaOaepCipher();
         this.cryptoMetrics = cryptoMetrics;
         this.certResolver = certResolver;
+        this.evidenceValidator = evidenceValidator;
     }
 
     @Override
@@ -127,8 +140,11 @@ public class DefaultCertEncryptionTemplate implements CertEncryptionTemplate {
         } else if (recipient instanceof Recipient.PublicKeyRecipient pkr) {
             return pkr.spki();
         } else if (recipient instanceof Recipient.SubjectRecipient sr) {
-            byte[] certDer = resolveSubjectToCert(sr);
-            return extractPublicKeyFromCert(certDer);
+            CertificateEvidence evidence = resolveSubjectToEvidence(sr);
+            if (evidence.hasSpki()) {
+                return evidence.spki();
+            }
+            return extractPublicKeyFromCert(evidence.certificateDer());
         } else {
             throw new CryptoException(CryptoException.Reason.INTEGRITY_VERIFICATION_FAILED,
                     "Unsupported recipient type: " + recipient.getClass().getName()) {};
@@ -152,22 +168,31 @@ public class DefaultCertEncryptionTemplate implements CertEncryptionTemplate {
     }
 
     /**
-     * 经 CertResolver 把主体引用解析为证书 DER
+     * 经统一证书解析门面把主体/序列号解析为已校验证据（FW-SEC-DSN-CR-012 §4.1）。
+     * <p>
+     * 主体走显式 {@link CertificateSubjectRef}，序列号走 certSerial；
+     * 解析顺序与校验由 {@link CertResolver} / {@link CertificateEvidenceValidator} 统一承担。
      */
-    private byte[] resolveSubjectToCert(Recipient.SubjectRecipient sr) {
-        switch (sr.type()) {
-            case VIN:
-                return certResolver.resolveByVin(sr.value());
-            case DEVICE:
-                return certResolver.resolveByDeviceSn(sr.value());
-            case USER:
-                return certResolver.resolveByUid(sr.value());
-            case SERIAL:
-                return certResolver.resolveBySerial(sr.value());
-            default:
-                throw new CryptoException(CryptoException.Reason.INTEGRITY_VERIFICATION_FAILED,
-                        "Unsupported subject type: " + sr.type()) {};
+    private CertificateEvidence resolveSubjectToEvidence(Recipient.SubjectRecipient sr) {
+        if (certResolver == null) {
+            throw new CryptoDependencyUnavailableException(
+                    "CertResolver not configured; cannot resolve recipient certificate");
         }
+        DeviceCertificateRef ref;
+        switch (sr.type()) {
+            case VIN -> ref = DeviceCertificateRef.ofSubject(CertificateSubjectRef.ofVehicle(sr.value()));
+            case DEVICE -> ref = DeviceCertificateRef.ofSubject(CertificateSubjectRef.ofDevice(sr.value()));
+            case USER -> ref = DeviceCertificateRef.ofSubject(CertificateSubjectRef.ofUser(sr.value()));
+            case SERIAL -> ref = DeviceCertificateRef.ofSerial(sr.value());
+            default -> throw new CryptoException(CryptoException.Reason.INTEGRITY_VERIFICATION_FAILED,
+                    "Unsupported subject type: " + sr.type()) {};
+        }
+        CertificateResolvePolicy policy = CertificateResolvePolicy.certEncryption();
+        CertificateEvidence evidence = certResolver.resolve(ref, policy);
+        if (evidenceValidator != null) {
+            evidence = evidenceValidator.validate(evidence, ref, policy);
+        }
+        return evidence;
     }
 
     /**

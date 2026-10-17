@@ -152,6 +152,21 @@ public final class TestPkiMaterial {
                 new JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.getPrivate())));
     }
 
+    /**
+     * 生成自定义有效期的自签名终端实体证书（非 CA，keyUsage=keyAgreement），
+     * 供证书材料校验的有效期/用途测试使用。
+     */
+    public static X509Certificate issueEndEntitySelfSignedWithValidity(X500Name subject, KeyPair keyPair,
+                                                                       BigInteger serial, Instant notBefore,
+                                                                       Instant notAfter) throws Exception {
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                subject, serial, Date.from(notBefore), Date.from(notAfter), subject, keyPair.getPublic());
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyAgreement));
+        return toCertificate(builder.build(
+                new JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.getPrivate())));
+    }
+
     public static X509Certificate issueCa(X500Name issuer, KeyPair issuerKeyPair,
                                           X500Name subject, PublicKey publicKey, BigInteger serial) throws Exception {
         Date notBefore = Date.from(Instant.now().minusSeconds(3600));
