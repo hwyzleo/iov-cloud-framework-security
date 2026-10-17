@@ -59,6 +59,14 @@ public interface KmsFeignClient {
     FeignKmsClient.WrapBusinessKeyResponse wrapBusinessKey(@PathVariable("keyId") String keyId,
                                                            @RequestBody FeignKmsClient.WrapBusinessKeyRequest request);
 
+    /**
+     * 根派生并在受控边界内原子封装（FW-SEC-DSN-CR-013 §8）。
+     * <p>
+     * 独立操作，不与随机 Create 复用；路径固定 {@code /v1/business-key/derived-keys:wrap}。
+     */
+    @PostMapping("/v1/business-key/derived-keys:wrap")
+    FeignKmsClient.DerivedWrapResponse deriveAndWrap(@RequestBody FeignKmsClient.DeriveAndWrapRequest request);
+
     @GetMapping("/v1/business-key/keys/{keyId}")
     FeignKmsClient.BusinessKeyMetadataResponse getBusinessKeyMetadata(@PathVariable("keyId") String keyId);
 

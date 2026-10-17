@@ -18,60 +18,63 @@ public enum BizType {
      * 车云通信根
      */
     V2C_COMM_ROOT(DeviceCategory.TBOX, false, new Prov("v2c-comm-root", Anchor.VEHICLE), CryptoMode.SESSION,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 防盗组密钥
      */
     IMMO_GROUP_KEY(DeviceCategory.BCM, false, new Prov("immo-group", Anchor.VEHICLE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * OTA车辆侧激活/回执根
      */
     OTA_VEHICLE_ROOT(DeviceCategory.CGW, false, new Prov("ota-vehicle-root", Anchor.VEHICLE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * TBOX设备根
      */
     TBOX_DEVICE_ROOT(DeviceCategory.TBOX, false, new Prov("tbox-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 中央计算单元设备根
      */
     CCU_DEVICE_ROOT(DeviceCategory.CCU, false, new Prov("ccu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 中央网关设备根
      */
     CGW_DEVICE_ROOT(DeviceCategory.CGW, false, new Prov("cgw-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 自动驾驶域控设备根
      */
     AD_DCU_DEVICE_ROOT(DeviceCategory.AD_DCU, false, new Prov("ad-dcu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 座舱域控设备根
      */
     CPT_DCU_DEVICE_ROOT(DeviceCategory.CPT_DCU, false, new Prov("cpt-dcu-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 智能钥匙设备根
      */
     PEPS_DEVICE_ROOT(DeviceCategory.PEPS, false, new Prov("peps-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 安全灌注机设备根（产线工装；防盗根等封装下发的收方；仅 uid 路径）
      */
     KLD_DEVICE_ROOT(DeviceCategory.KLD, false, new Prov("kld-dev-root", Anchor.DEVICE), CryptoMode.ENVELOPE,
-            KeyType.SYMMETRIC, false, null),
+            KeyType.SYMMETRIC, false, null, KeyMaterialModel.DERIVED_ROOT),
     /**
      * 数字钥匙 KTS 签名私钥（车企 KTS 侧签名根，云端持有，组织级全局一把）
      * <p>
      * 首个非对称签名消费方（IDK / CCC），具体业务用途归消费方定义。
      * {@code anchor=ORG}：{@code KeyScope.org()} 无需附带主体，KMS keyName 即 {@code prov.keyName}。
+     * <p>
+     * {@code materialModel=null}：非对称签名条目不属于对称材料模型，由签名门面管理，
+     * 根派生门面与随机材料门面均对其 fail-closed（FW-SEC-DSN-CR-013 §5）。
      */
     IDK_KTS_SIGNING(null, false, new Prov("idk-kts-signing", Anchor.ORG), null,
-            KeyType.ASYMMETRIC, true, SignAlgo.ECDSA_P256);
+            KeyType.ASYMMETRIC, true, SignAlgo.ECDSA_P256, null);
 
     private final DeviceCategory deviceCategory;
     private final boolean supportsData;
@@ -80,9 +83,10 @@ public enum BizType {
     private final KeyType keyType;
     private final boolean supportsSigning;
     private final SignAlgo signAlgo;
+    private final KeyMaterialModel materialModel;
 
     BizType(DeviceCategory deviceCategory, boolean supportsData, Prov prov, CryptoMode cryptoMode,
-            KeyType keyType, boolean supportsSigning, SignAlgo signAlgo) {
+            KeyType keyType, boolean supportsSigning, SignAlgo signAlgo, KeyMaterialModel materialModel) {
         this.deviceCategory = deviceCategory;
         this.supportsData = supportsData;
         this.prov = prov;
@@ -90,6 +94,7 @@ public enum BizType {
         this.keyType = keyType;
         this.supportsSigning = supportsSigning;
         this.signAlgo = signAlgo;
+        this.materialModel = materialModel;
     }
 
     /**
@@ -117,6 +122,38 @@ public enum BizType {
      */
     public boolean supportsProvision() {
         return prov != null;
+    }
+
+    /**
+     * 业务密钥材料模型（FW-SEC-DSN-CR-013 §7.1）
+     * <p>
+     * 根派生型为 {@link KeyMaterialModel#DERIVED_ROOT}（由 {@code KeyProvisioningTemplate.deriveAndWrap} 承接），
+     * 独立随机材料型为 {@link KeyMaterialModel#RANDOM_MATERIAL}（由 {@code BusinessKeyMaterialTemplate} 承接）。
+     * 非对称签名条目（如 {@code IDK_KTS_SIGNING}）不属对称材料模型，返回 {@code null}，
+     * 两个门面均须对其 fail-closed。
+     *
+     * @return KeyMaterialModel 或 null（不适用）
+     */
+    public KeyMaterialModel materialModel() {
+        return materialModel;
+    }
+
+    /**
+     * 是否属根派生型（{@code prov != null && materialModel == DERIVED_ROOT}）
+     *
+     * @return true 表示可走根派生封装门面
+     */
+    public boolean supportsDerivedRoot() {
+        return prov != null && materialModel == KeyMaterialModel.DERIVED_ROOT;
+    }
+
+    /**
+     * 是否属独立随机材料型（{@code materialModel == RANDOM_MATERIAL}）
+     *
+     * @return true 表示可走随机材料门面
+     */
+    public boolean supportsRandomMaterial() {
+        return materialModel == KeyMaterialModel.RANDOM_MATERIAL;
     }
 
     /**

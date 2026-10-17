@@ -12,6 +12,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KeyMaterialModel;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyCreateRequest;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyRef;
@@ -73,7 +74,14 @@ class BusinessKeyProviderContractIntegrationTest {
                         leafCertDer, EvidenceSource.PROVIDER_QUERY));
 
         kmsClient = new FeignKmsClient(properties, kmsFeignClient, cryptoMetrics);
-        template = new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties, certResolver);
+        // 材料模型判定扩展点：v1 尚无 RANDOM_MATERIAL 枚举项（枚举不可 mock），
+        // 通过子类注入 RANDOM_MATERIAL，使 create/wrap/metadata/revoke 仍走 Provider 路由。
+        template = new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties, certResolver) {
+            @Override
+            protected KeyMaterialModel materialModelOf(BizType bizType) {
+                return KeyMaterialModel.RANDOM_MATERIAL;
+            }
+        };
     }
 
     @Test

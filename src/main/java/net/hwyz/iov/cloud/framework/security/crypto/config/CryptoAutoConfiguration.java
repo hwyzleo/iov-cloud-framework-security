@@ -206,9 +206,13 @@ public class CryptoAutoConfiguration {
     @ConditionalOnProperty(prefix = "crypto.provisioning", name = "enabled", havingValue = "true")
     public KeyProvisioningTemplate keyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                                            CryptoProperties properties,
-                                                           ObjectProvider<DeviceResolver> deviceResolverProvider) {
+                                                           ObjectProvider<DeviceResolver> deviceResolverProvider,
+                                                           ObjectProvider<CertResolver> certResolverProvider,
+                                                           ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider) {
         return new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
-                deviceResolverProvider.getIfAvailable());
+                deviceResolverProvider.getIfAvailable(),
+                certResolverProvider.getIfAvailable(),
+                evidenceValidatorProvider.getIfAvailable());
     }
 
     @Bean

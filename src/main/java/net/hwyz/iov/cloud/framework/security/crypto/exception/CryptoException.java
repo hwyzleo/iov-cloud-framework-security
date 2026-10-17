@@ -27,6 +27,11 @@ public abstract class CryptoException extends RuntimeException {
         BUSINESS_KEY_WRAP_FAILED,
         BUSINESS_KEY_REVOCATION_FAILED,
         CRYPTO_OPERATION_OUTCOME_UNKNOWN,
+        // 密钥材料模型路由与根派生契约（FW-SEC-DSN-CR-013 §7.3/§6）
+        MATERIAL_MODEL_MISMATCH,
+        INVALID_KEY_ANCHOR,
+        UNSUPPORTED_RECIPIENT,
+        LEGACY_FACADE_UNSUPPORTED,
         // 证书材料解析（FW-SEC-DSN-CR-012 §5/§6）
         CERTIFICATE_EVIDENCE_MISMATCH,
         CERTIFICATE_REFERENCE_AMBIGUOUS,

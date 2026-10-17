@@ -16,8 +16,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyRevocat
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyWrapFailedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.KeyMaterialModelMismatchException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KeyMaterialModel;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyCreateRequest;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyRef;
@@ -54,6 +56,7 @@ class DefaultBusinessKeyMaterialTemplateTest {
     private CryptoProperties properties;
     private CertResolver certResolver;
     private DefaultBusinessKeyMaterialTemplate template;
+    private DefaultBusinessKeyMaterialTemplate randomMaterialTemplate;
 
     private static byte[] leafCertDer;
 
@@ -72,6 +75,15 @@ class DefaultBusinessKeyMaterialTemplateTest {
                 .thenReturn(CertificateEvidenceValidator.fromCertificateDer(
                         leafCertDer, EvidenceSource.PROVIDER_QUERY));
         template = new DefaultBusinessKeyMaterialTemplate(kmsClient, cryptoMetrics, properties, certResolver);
+        // 材料模型判定扩展点：v1 尚无 RANDOM_MATERIAL 枚举项（枚举不可 mock），
+        // 通过子类注入 RANDOM_MATERIAL 以覆盖 create 正向路径。
+        randomMaterialTemplate = new DefaultBusinessKeyMaterialTemplate(
+                kmsClient, cryptoMetrics, properties, certResolver) {
+            @Override
+            protected KeyMaterialModel materialModelOf(BizType bizType) {
+                return KeyMaterialModel.RANDOM_MATERIAL;
+            }
+        };
     }
 
     // ==================== create ====================
@@ -83,7 +95,7 @@ class DefaultBusinessKeyMaterialTemplateTest {
                         "openbao-business-key", "AES_256", "256",
                         Instant.parse("2026-10-01T00:00:00Z"), null));
 
-        BusinessKeyMaterial material = template.create(
+        BusinessKeyMaterial material = randomMaterialTemplate.create(
                 new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
                         KeyMaterialPolicy.of("AES_256", "256"), "idem-1", null));
 
@@ -105,7 +117,7 @@ class DefaultBusinessKeyMaterialTemplateTest {
                 .thenThrow(new BusinessKeyIdempotencyConflictException("conflict"));
 
         assertThrows(BusinessKeyIdempotencyConflictException.class,
-                () -> template.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
+                () -> randomMaterialTemplate.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
                         KeyMaterialPolicy.of("AES_256", "256"), "idem-1", null)));
     }
 
@@ -115,7 +127,7 @@ class DefaultBusinessKeyMaterialTemplateTest {
                 .thenThrow(new CryptoOperationOutcomeUnknownException("unknown", null, "op-1"));
 
         CryptoOperationOutcomeUnknownException ex = assertThrows(CryptoOperationOutcomeUnknownException.class,
-                () -> template.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
+                () -> randomMaterialTemplate.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
                         KeyMaterialPolicy.of("AES_256", "256"), "idem-1", null)));
         assertEquals("op-1", ex.getOperationId());
     }
@@ -126,10 +138,18 @@ class DefaultBusinessKeyMaterialTemplateTest {
                 .thenThrow(new IllegalStateException("boom"));
 
         CryptoOperationOutcomeUnknownException ex = assertThrows(CryptoOperationOutcomeUnknownException.class,
-                () -> template.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
+                () -> randomMaterialTemplate.create(new BusinessKeyCreateRequest(BizType.TBOX_DEVICE_ROOT,
                         KeyMaterialPolicy.of("AES_256", "256"), "idem-1", null)));
         assertTrue(ex.getMessage().contains("idem-1") || ex.getMessage().contains("operationId"));
         assertNotNull(ex.getOperationId());
+    }
+
+    @Test
+    void create_derivedRoot_failClosedWithoutRandomFallback() {
+        assertThrows(KeyMaterialModelMismatchException.class,
+                () -> template.create(new BusinessKeyCreateRequest(BizType.V2C_COMM_ROOT,
+                        KeyMaterialPolicy.of("AES_256", "256"), "idem-1", null)));
+        verify(kmsClient, never()).createDataKey(any(KmsCreateKeyCommand.class));
     }
 
     @Test

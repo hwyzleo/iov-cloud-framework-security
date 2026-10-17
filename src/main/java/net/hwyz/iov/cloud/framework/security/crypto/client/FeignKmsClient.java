@@ -9,7 +9,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KdfParams;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.CryptoKeyState;
@@ -332,6 +334,93 @@ public class FeignKmsClient implements KmsClient {
             recordFailure("capabilities", start, e);
             throw classify(e, "get business key capabilities", false, false, null);
         }
+    }
+
+    // ==================== 根派生封装（FW-SEC-DSN-CR-013 §7.3/§8） ====================
+
+    @Override
+    public DerivedWrappedKey deriveAndWrap(KmsDerivedKeyReference rootRef, DerivationInput input,
+                                           KmsRecipient recipient, OperationContext operation) {
+        long start = System.currentTimeMillis();
+        try {
+            DeriveAndWrapRequest request = new DeriveAndWrapRequest();
+            request.setBizType(rootRef.bizType());
+            request.setDerivationVersion(input.derivationVersion());
+            request.setAnchor(toAnchor(input.anchor()));
+            request.setPurpose(input.purpose().name());
+            request.setRecipient(toDerivedRecipient(recipient));
+            request.setOperationId(operation.operationId());
+            request.setIdempotencyKey(operation.idempotencyKey());
+            DerivedWrapResponse response = kmsFeignClient.deriveAndWrap(request);
+            recordSuccess("deriveAndWrap", start);
+            if (cryptoMetrics != null) {
+                cryptoMetrics.recordBusinessKeyProviderIdempotency("accepted");
+            }
+            return mapDerivedWrappedKey(response, operation.operationId());
+        } catch (CryptoException e) {
+            recordFailure("deriveAndWrap", start, e);
+            throw e;
+        } catch (Exception e) {
+            recordFailure("deriveAndWrap", start, e);
+            // 写操作：请求已发送后的 5xx/超时按结果未知处理；404 一律为路由/Provider 异常
+            throw classify(e, "derive and wrap derived key", false, true, operation.operationId());
+        }
+    }
+
+    /**
+     * 规范化锚点映射：携带规范化原文（参与派生）与 {@code sha256:} 摘要（完整性比对）。
+     * 派生明文与锚原文均不进日志。
+     */
+    private DerivedAnchor toAnchor(KeyAnchor anchor) {
+        DerivedAnchor wire = new DerivedAnchor();
+        wire.setType(anchor.type().name());
+        wire.setNormalizationVersion(anchor.normalizationVersion());
+        wire.setValue(anchor.value());
+        wire.setDigest(anchor.digest());
+        return wire;
+    }
+
+    private DerivedRecipient toDerivedRecipient(KmsRecipient recipient) {
+        DerivedRecipient wire = new DerivedRecipient();
+        wire.setMode(recipient.mode() != null ? recipient.mode().name() : null);
+        wire.setCertificateDer(recipient.certificateDer());
+        wire.setSpki(recipient.spki());
+        wire.setSha256Fingerprint(recipient.certificateSha256Fingerprint());
+        return wire;
+    }
+
+    private DerivedWrappedKey mapDerivedWrappedKey(DerivedWrapResponse response, String fallbackOperationId) {
+        byte[] kcv = response.getKcv() != null ? decodeHex(response.getKcv()) : null;
+        return new DerivedWrappedKey(
+                response.getLogicalKeyId(),
+                response.getKmsKeyRef(),
+                response.getRootKeyVersion(),
+                response.getDerivationVersion(),
+                response.getWrapped(),
+                response.getWrappingAlgorithm(),
+                kcv,
+                response.getOperationId() != null ? response.getOperationId() : fallbackOperationId);
+    }
+
+    private static byte[] decodeHex(String hex) {
+        String normalized = hex.trim();
+        if (normalized.startsWith("0x") || normalized.startsWith("0X")) {
+            normalized = normalized.substring(2);
+        }
+        if (normalized.length() % 2 != 0) {
+            throw new IllegalArgumentException("kcv hex length must be even");
+        }
+        int len = normalized.length() / 2;
+        byte[] out = new byte[len];
+        for (int i = 0; i < len; i++) {
+            int hi = Character.digit(normalized.charAt(i * 2), 16);
+            int lo = Character.digit(normalized.charAt(i * 2 + 1), 16);
+            if (hi < 0 || lo < 0) {
+                throw new IllegalArgumentException("kcv hex contains non-hex characters");
+            }
+            out[i] = (byte) ((hi << 4) | lo);
+        }
+        return out;
     }
 
     // ==================== 异常分类（FW-SEC-DSN-CR-011 §6.6） ====================
@@ -1382,6 +1471,245 @@ public class FeignKmsClient implements KmsClient {
 
         public void setParameters(Map<String, String> parameters) {
             this.parameters = parameters;
+        }
+    }
+
+    // ==================== 根派生封装 Provider DTO（FW-SEC-DSN-CR-013 §8） ====================
+
+    /**
+     * 根派生封装请求。路径固定 {@code POST /v1/business-key/derived-keys:wrap}。
+     * <p>
+     * 携带<b>规范化锚原文</b>（Provider 据此重算 HMAC 与摘要）；{@code rootKeyRef} 不由调用方传入，
+     * 由 Provider 按 {@code bizType} 策略注册表映射受治理根。
+     */
+    public static class DeriveAndWrapRequest {
+        private String bizType;
+        private String derivationVersion;
+        private DerivedAnchor anchor;
+        private String purpose;
+        private DerivedRecipient recipient;
+        private String operationId;
+        private String idempotencyKey;
+
+        public String getBizType() {
+            return bizType;
+        }
+
+        public void setBizType(String bizType) {
+            this.bizType = bizType;
+        }
+
+        public String getDerivationVersion() {
+            return derivationVersion;
+        }
+
+        public void setDerivationVersion(String derivationVersion) {
+            this.derivationVersion = derivationVersion;
+        }
+
+        public DerivedAnchor getAnchor() {
+            return anchor;
+        }
+
+        public void setAnchor(DerivedAnchor anchor) {
+            this.anchor = anchor;
+        }
+
+        public String getPurpose() {
+            return purpose;
+        }
+
+        public void setPurpose(String purpose) {
+            this.purpose = purpose;
+        }
+
+        public DerivedRecipient getRecipient() {
+            return recipient;
+        }
+
+        public void setRecipient(DerivedRecipient recipient) {
+            this.recipient = recipient;
+        }
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
+        }
+
+        public String getIdempotencyKey() {
+            return idempotencyKey;
+        }
+
+        public void setIdempotencyKey(String idempotencyKey) {
+            this.idempotencyKey = idempotencyKey;
+        }
+    }
+
+    /**
+     * 派生锚点：规范化原文（参与派生）+ 摘要（完整性比对，不参与派生）。
+     * <p>
+     * <b>安全边界</b>：{@code value} 仅允许出现在受保护的请求体与 Provider 有界内存中；
+     * 日志、指标、审计摘要与引用只允许使用 {@code digest}。
+     */
+    public static class DerivedAnchor {
+        private String type;
+        private String normalizationVersion;
+        private String value;
+        private String digest;
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getNormalizationVersion() {
+            return normalizationVersion;
+        }
+
+        public void setNormalizationVersion(String normalizationVersion) {
+            this.normalizationVersion = normalizationVersion;
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public void setValue(String value) {
+            this.value = value;
+        }
+
+        public String getDigest() {
+            return digest;
+        }
+
+        public void setDigest(String digest) {
+            this.digest = digest;
+        }
+    }
+
+    /**
+     * 派生封装收方：首期仅 {DEVICE_CERT_PUBLIC_KEY}，携带已验证证书 DER/SPKI 与指纹。
+     */
+    public static class DerivedRecipient {
+        private String mode;
+        private byte[] certificateDer;
+        private byte[] spki;
+        private String sha256Fingerprint;
+
+        public String getMode() {
+            return mode;
+        }
+
+        public void setMode(String mode) {
+            this.mode = mode;
+        }
+
+        public byte[] getCertificateDer() {
+            return certificateDer;
+        }
+
+        public void setCertificateDer(byte[] certificateDer) {
+            this.certificateDer = certificateDer;
+        }
+
+        public byte[] getSpki() {
+            return spki;
+        }
+
+        public void setSpki(byte[] spki) {
+            this.spki = spki;
+        }
+
+        public String getSha256Fingerprint() {
+            return sha256Fingerprint;
+        }
+
+        public void setSha256Fingerprint(String sha256Fingerprint) {
+            this.sha256Fingerprint = sha256Fingerprint;
+        }
+    }
+
+    /**
+     * 根派生封装响应：瞬时 Wrapped Key + 非敏感元数据（{@code kcv} 为十六进制）。
+     */
+    public static class DerivedWrapResponse {
+        private String logicalKeyId;
+        private String kmsKeyRef;
+        private Integer rootKeyVersion;
+        private String derivationVersion;
+        private byte[] wrapped;
+        private String wrappingAlgorithm;
+        private String kcv;
+        private String operationId;
+
+        public String getLogicalKeyId() {
+            return logicalKeyId;
+        }
+
+        public void setLogicalKeyId(String logicalKeyId) {
+            this.logicalKeyId = logicalKeyId;
+        }
+
+        public String getKmsKeyRef() {
+            return kmsKeyRef;
+        }
+
+        public void setKmsKeyRef(String kmsKeyRef) {
+            this.kmsKeyRef = kmsKeyRef;
+        }
+
+        public Integer getRootKeyVersion() {
+            return rootKeyVersion;
+        }
+
+        public void setRootKeyVersion(Integer rootKeyVersion) {
+            this.rootKeyVersion = rootKeyVersion;
+        }
+
+        public String getDerivationVersion() {
+            return derivationVersion;
+        }
+
+        public void setDerivationVersion(String derivationVersion) {
+            this.derivationVersion = derivationVersion;
+        }
+
+        public byte[] getWrapped() {
+            return wrapped;
+        }
+
+        public void setWrapped(byte[] wrapped) {
+            this.wrapped = wrapped;
+        }
+
+        public String getWrappingAlgorithm() {
+            return wrappingAlgorithm;
+        }
+
+        public void setWrappingAlgorithm(String wrappingAlgorithm) {
+            this.wrappingAlgorithm = wrappingAlgorithm;
+        }
+
+        public String getKcv() {
+            return kcv;
+        }
+
+        public void setKcv(String kcv) {
+            this.kcv = kcv;
+        }
+
+        public String getOperationId() {
+            return operationId;
+        }
+
+        public void setOperationId(String operationId) {
+            this.operationId = operationId;
         }
     }
 

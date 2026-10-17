@@ -18,6 +18,8 @@ public enum KmsErrorCode {
     FORBIDDEN,
     BUSINESS_KEY_REVOKED,
     BUSINESS_KEY_EXPIRED,
+    // 根派生 deriveAndWrap：规范化锚原文与声明摘要不一致（FW-SEC-DSN-CR-013 §8/§10）
+    ANCHOR_DIGEST_MISMATCH,
     RATE_LIMITED,
     PROVIDER_ERROR,
     NOT_READY,

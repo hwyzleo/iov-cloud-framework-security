@@ -1,6 +1,7 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
@@ -8,6 +9,28 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
  * KMS客户端接口
  */
 public interface KmsClient {
+
+    /**
+     * 根派生并在受控边界内原子封装（FW-SEC-DSN-CR-013 §7.3）。
+     * <p>
+     * 仅用于 {@code KeyMaterialModel.DERIVED_ROOT}：Provider 在受控边界内按
+     * {@code bizType} 策略映射受治理根，用规范化锚原文、purpose、派生版本确定性派生，
+     * 随即用收方证书公钥封装并释放派生明文；framework/业务不得接收根或派生明文。
+     * <p>
+     * {@code rootRef} 由受治理策略映射而来，不接受调用方任意传入。
+     * 请求已发送后超时/5xx 抛
+     * {@link net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException}
+     * （携带 operationId，须原键对账）；幂等冲突抛
+     * {@link net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException}。
+     *
+     * @param rootRef   受治理根派生引用（bizType + 不透明根引用）
+     * @param input     派生输入（锚点原文/摘要、purpose、派生版本）
+     * @param recipient 收方（首期 DEVICE_CERT_PUBLIC_KEY）
+     * @param operation 写操作上下文（operationId/幂等键）
+     * @return 瞬时派生封装结果（含 Wrapped Key 与非敏感元数据）
+     */
+    DerivedWrappedKey deriveAndWrap(KmsDerivedKeyReference rootRef, DerivationInput input,
+                                    KmsRecipient recipient, OperationContext operation);
 
     /**
      * 创建业务密钥材料（FW-SEC-DSN-CR-009 §9）。

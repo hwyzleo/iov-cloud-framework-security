@@ -17,8 +17,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyWrapFai
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.KeyMaterialModelMismatchException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KeyMaterialModel;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyCreateRequest;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyMetadata;
@@ -95,6 +97,7 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(request.bizType(), "bizType must not be null");
         Objects.requireNonNull(request.policy(), "policy must not be null");
+        requireRandomMaterial(request.bizType());
 
         String operationId = UuidV7.toString(UuidV7.random());
         try {
@@ -242,6 +245,31 @@ public class DefaultBusinessKeyMaterialTemplate implements BusinessKeyMaterialTe
             log.error("业务密钥吊销异常: keyId={}", keyRef.keyId(), e);
             throw new BusinessKeyRevocationFailedException(
                     "业务密钥吊销失败: keyId=" + keyRef.keyId(), e);
+        }
+    }
+
+    /**
+     * 材料模型判定（受治理扩展点；生产实现恒取 {@code bizType.materialModel()}）。
+     * <p>
+     * 集中此判定便于统一治理与测试注入 {@code RANDOM_MATERIAL} 场景（v1 尚无随机材料型
+     * {@code BizType} 枚举项；新增取值须走 CR + framework 发版）。
+     */
+    protected KeyMaterialModel materialModelOf(BizType bizType) {
+        return bizType.materialModel();
+    }
+
+    /**
+     * 材料模型路由 fail-closed：仅 {@code RANDOM_MATERIAL} 可进本门面；
+     * {@code DERIVED_ROOT} 须走 {@code KeyProvisioningTemplate.deriveAndWrap}，
+     * 非对称签名条目（{@code materialModel=null}）亦拒绝（FW-SEC-DSN-CR-013 §7.3）。
+     */
+    private void requireRandomMaterial(BizType bizType) {
+        KeyMaterialModel model = materialModelOf(bizType);
+        if (model != KeyMaterialModel.RANDOM_MATERIAL) {
+            throw new KeyMaterialModelMismatchException(
+                    "BusinessKeyMaterialTemplate.create 仅接受 RANDOM_MATERIAL；got bizType=" + bizType.name()
+                            + ", materialModel=" + model
+                            + "；DERIVED_ROOT 须走 KeyProvisioningTemplate.deriveAndWrap（FW-SEC-DSN-CR-013 §7.3）");
         }
     }
 

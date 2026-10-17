@@ -2,6 +2,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
 
@@ -10,6 +11,12 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
  * 当没有配置KMS端点时使用，调用时会抛出异常
  */
 public class DefaultKmsClient implements KmsClient {
+
+    @Override
+    public DerivedWrappedKey deriveAndWrap(KmsDerivedKeyReference rootRef, DerivationInput input,
+                                           KmsRecipient recipient, OperationContext operation) {
+        throw new CryptoDependencyUnavailableException("KMS client not configured. Please set crypto.kms.endpoint property.");
+    }
 
     @Override
     public KmsKeyMaterial createDataKey(KmsCreateKeyCommand command) {

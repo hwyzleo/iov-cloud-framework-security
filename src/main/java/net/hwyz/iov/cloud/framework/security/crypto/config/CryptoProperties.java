@@ -435,6 +435,15 @@ public class CryptoProperties {
          */
         private String provider = "Vault-Transit";
 
+        /**
+         * 是否保留 legacy 对称 KEK 解封门面（默认 false，fail-closed）。
+         * <p>
+         * 仅用于受控的历史对称 KEK（{@code dev-{sn|uid}}）场景；根派生型（{@code DERIVED_ROOT}）
+         * 不再走云端对称解封。开启后 {@code unwrapByVin/unwrapByUid} 恢复旧行为，
+         * 其余已废弃的兼容门面仍恒 fail-closed（FW-SEC-DSN-CR-013 §12）。
+         */
+        private boolean legacyFacadeEnabled = false;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -449,6 +458,14 @@ public class CryptoProperties {
 
         public void setProvider(String provider) {
             this.provider = provider;
+        }
+
+        public boolean isLegacyFacadeEnabled() {
+            return legacyFacadeEnabled;
+        }
+
+        public void setLegacyFacadeEnabled(boolean legacyFacadeEnabled) {
+            this.legacyFacadeEnabled = legacyFacadeEnabled;
         }
     }
 
