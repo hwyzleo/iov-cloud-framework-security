@@ -1,5 +1,8 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
+import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalEncoding;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyEnvelopeCanonical;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyRequestDigest;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyNotFoundException;
@@ -10,10 +13,13 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOut
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKeyEnvelopeV1;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KdfParams;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
+import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedDataKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappedKey;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.CryptoKeyState;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 
@@ -336,27 +342,20 @@ public class FeignKmsClient implements KmsClient {
         }
     }
 
-    // ==================== 根派生封装（FW-SEC-DSN-CR-013 §7.3/§8） ====================
+    // ==================== 根派生封装（FW-SEC-DSN-CR-013 §7.3/§8；CR-014 §4/§5.2） ====================
 
     @Override
     public DerivedWrappedKey deriveAndWrap(KmsDerivedKeyReference rootRef, DerivationInput input,
                                            KmsRecipient recipient, OperationContext operation) {
         long start = System.currentTimeMillis();
         try {
-            DeriveAndWrapRequest request = new DeriveAndWrapRequest();
-            request.setBizType(rootRef.bizType());
-            request.setDerivationVersion(input.derivationVersion());
-            request.setAnchor(toAnchor(input.anchor()));
-            request.setPurpose(input.purpose().name());
-            request.setRecipient(toDerivedRecipient(recipient));
-            request.setOperationId(operation.operationId());
-            request.setIdempotencyKey(operation.idempotencyKey());
+            DeriveAndWrapRequest request = buildDeriveAndWrapRequest(rootRef, input, recipient, operation);
             DerivedWrapResponse response = kmsFeignClient.deriveAndWrap(request);
             recordSuccess("deriveAndWrap", start);
             if (cryptoMetrics != null) {
                 cryptoMetrics.recordBusinessKeyProviderIdempotency("accepted");
             }
-            return mapDerivedWrappedKey(response, operation.operationId());
+            return mapDerivedWrappedKey(response, input, operation.operationId());
         } catch (CryptoException e) {
             recordFailure("deriveAndWrap", start, e);
             throw e;
@@ -365,6 +364,39 @@ public class FeignKmsClient implements KmsClient {
             // 写操作：请求已发送后的 5xx/超时按结果未知处理；404 一律为路由/Provider 异常
             throw classify(e, "derive and wrap derived key", false, true, operation.operationId());
         }
+    }
+
+    /**
+     * 组装根派生封装请求：含规范化锚原文与摘要、purpose、证书材料、封装套件与幂等请求摘要。
+     */
+    private DeriveAndWrapRequest buildDeriveAndWrapRequest(KmsDerivedKeyReference rootRef, DerivationInput input,
+                                                           KmsRecipient recipient, OperationContext operation) {
+        DeriveAndWrapRequest request = new DeriveAndWrapRequest();
+        request.setBizType(rootRef.bizType());
+        request.setDerivationVersion(input.derivationVersion());
+        request.setAnchor(toAnchor(input.anchor()));
+        request.setPurpose(input.purpose().name());
+        request.setRecipient(toDerivedRecipient(recipient));
+        request.setOperationId(operation.operationId());
+        request.setIdempotencyKey(operation.idempotencyKey());
+        if (input.wrappingSuite() != null) {
+            request.setWrappingSuite(input.wrappingSuite().wireName());
+        }
+        // 幂等请求摘要（FW-SEC-DSN-CR-014 §5.2）：framework 组装受治理输入并计算，Provider 侧重算比对。
+        CryptoProperties.Provisioning provisioning = properties.getProvisioning();
+        request.setRequestDigest(DerivedKeyRequestDigest.requestDigestHex(
+                provisioning.getCaller(),
+                rootRef.bizType(),
+                rootRef.rootKeyRef(),
+                provisioning.getRootVersionPolicy(),
+                input.derivationVersion(),
+                input.anchor().digest(),
+                input.purpose(),
+                input.requestId(),
+                input.businessKeyVersion(),
+                recipient.certificateSha256Fingerprint(),
+                input.wrappingSuite()));
+        return request;
     }
 
     /**
@@ -389,17 +421,92 @@ public class FeignKmsClient implements KmsClient {
         return wire;
     }
 
-    private DerivedWrappedKey mapDerivedWrappedKey(DerivedWrapResponse response, String fallbackOperationId) {
+    /**
+     * 响应映射（FW-SEC-DSN-CR-014 §4/§5.1）：
+     * <ol>
+     *   <li>解析 {@code wrappingSuite}，未知即 fail-closed（依赖/契约异常）；</li>
+     *   <li>解码 {@code kcv} 十六进制；</li>
+     *   <li>由响应组装 {@link DerivedWrappedKeyEnvelopeV1} 并<strong>重算校验</strong>
+     *       {@code envelopeDigest} 与 {@code aadDigest}；</li>
+     *   <li>canonical 信封 bytes 由 framework 权威编码器重建，Provider 若回传 bytes 则须逐字节一致；</li>
+     *   <li>输出 {@link DerivedWrappedKey}（瞬时，仅元数据 + canonical 信封 bytes）。</li>
+     * </ol>
+     */
+    private DerivedWrappedKey mapDerivedWrappedKey(DerivedWrapResponse response, DerivationInput input,
+                                                   String fallbackOperationId) {
+        WrappingSuite suite = WrappingSuite.fromWireName(response.getWrappingSuite());
+        if (suite == null) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider returned unknown wrappingSuite: " + response.getWrappingSuite());
+        }
         byte[] kcv = response.getKcv() != null ? decodeHex(response.getKcv()) : null;
+        String operationId = response.getOperationId() != null ? response.getOperationId() : fallbackOperationId;
+
+        DerivedWrappedKeyEnvelopeV1 envelope = new DerivedWrappedKeyEnvelopeV1(
+                response.getEnvelopeVersion() != null
+                        ? response.getEnvelopeVersion() : DerivedWrappedKeyEnvelopeV1.V1,
+                suite,
+                response.getServerEphemeralPublicKey(),
+                response.getHkdfSalt(),
+                response.getHkdfContextVersion() != null
+                        ? response.getHkdfContextVersion() : DerivedWrappedKeyEnvelopeV1.HKDF_CONTEXT_V1,
+                response.getNonce(),
+                response.getCiphertext(),
+                response.getAuthenticationTag(),
+                response.getAad(),
+                response.getAadDigest(),
+                response.getRecipientCertificateFingerprint(),
+                response.getLogicalKeyId(),
+                response.getPurpose() != null ? parsePurpose(response.getPurpose()) : input.purpose(),
+                response.getBusinessKeyVersion() != null ? response.getBusinessKeyVersion() : 0L,
+                response.getRootKeyVersion() != null ? response.getRootKeyVersion() : 0,
+                response.getDerivationVersion(),
+                kcv,
+                operationId,
+                response.getEnvelopeDigest());
+
+        if (envelope.ciphertext() == null || envelope.ciphertext().length == 0) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider returned no envelope ciphertext");
+        }
+        if (envelope.aad() == null) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider returned no canonical AAD for envelope v1");
+        }
+        if (!DerivedKeyEnvelopeCanonical.verifyAadDigest(envelope)) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider aadDigest mismatch (envelope v1 canonical)");
+        }
+        if (!DerivedKeyEnvelopeCanonical.verifyEnvelopeDigest(envelope)) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider envelopeDigest mismatch (envelope v1 canonical)");
+        }
+        byte[] canonicalBytes = DerivedKeyEnvelopeCanonical.envelopeBytesWithoutDigest(envelope);
+        byte[] providerBytes = response.getEnvelopeBytes();
+        if (providerBytes != null && providerBytes.length > 0
+                && !CanonicalEncoding.constantTimeEquals(providerBytes, canonicalBytes)) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider envelopeBytes diverge from canonical envelope v1 bytes");
+        }
+
         return new DerivedWrappedKey(
                 response.getLogicalKeyId(),
                 response.getKmsKeyRef(),
-                response.getRootKeyVersion(),
+                response.getRootKeyVersion() != null ? response.getRootKeyVersion() : 0,
                 response.getDerivationVersion(),
-                response.getWrapped(),
-                response.getWrappingAlgorithm(),
+                suite,
+                canonicalBytes,
+                envelope.envelopeDigest(),
                 kcv,
-                response.getOperationId() != null ? response.getOperationId() : fallbackOperationId);
+                operationId);
+    }
+
+    private static KeyPurpose parsePurpose(String purpose) {
+        try {
+            return KeyPurpose.valueOf(purpose.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new CryptoDependencyUnavailableException("Unknown key purpose in derived wrap response: " + purpose);
+        }
     }
 
     private static byte[] decodeHex(String hex) {
@@ -623,7 +730,9 @@ public class FeignKmsClient implements KmsClient {
                 storageReady,
                 mountReady,
                 toSet(response.getAlgorithms()),
-                toSet(response.getWrapModes()));
+                toSet(response.getWrapModes()),
+                toSet(response.getDerivedEnvelopeVersions()),
+                !Boolean.FALSE.equals(response.getResultStoreReady()));
     }
 
     private static java.util.Set<String> toSet(List<String> values) {
@@ -1488,6 +1597,8 @@ public class FeignKmsClient implements KmsClient {
         private DerivedAnchor anchor;
         private String purpose;
         private DerivedRecipient recipient;
+        private String wrappingSuite;
+        private String requestDigest;
         private String operationId;
         private String idempotencyKey;
 
@@ -1529,6 +1640,22 @@ public class FeignKmsClient implements KmsClient {
 
         public void setRecipient(DerivedRecipient recipient) {
             this.recipient = recipient;
+        }
+
+        public String getWrappingSuite() {
+            return wrappingSuite;
+        }
+
+        public void setWrappingSuite(String wrappingSuite) {
+            this.wrappingSuite = wrappingSuite;
+        }
+
+        public String getRequestDigest() {
+            return requestDigest;
+        }
+
+        public void setRequestDigest(String requestDigest) {
+            this.requestDigest = requestDigest;
         }
 
         public String getOperationId() {
@@ -1636,15 +1763,31 @@ public class FeignKmsClient implements KmsClient {
     }
 
     /**
-     * 根派生封装响应：瞬时 Wrapped Key + 非敏感元数据（{@code kcv} 为十六进制）。
+     * 根派生封装响应（FW-SEC-DSN-CR-014 §4）：完整自描述信封 v1 + 非敏感元数据。
+     * <p>
+     * {@code envelopeDigest}/{@code aadDigest} 为十六进制或原始字节；framework 侧一律重算校验。
+     * {@code kcv} 为十六进制。
      */
     public static class DerivedWrapResponse {
         private String logicalKeyId;
         private String kmsKeyRef;
         private Integer rootKeyVersion;
         private String derivationVersion;
-        private byte[] wrapped;
-        private String wrappingAlgorithm;
+        private String purpose;
+        private Long businessKeyVersion;
+        private String wrappingSuite;
+        private String envelopeVersion;
+        private byte[] serverEphemeralPublicKey;
+        private byte[] hkdfSalt;
+        private String hkdfContextVersion;
+        private byte[] nonce;
+        private byte[] ciphertext;
+        private byte[] authenticationTag;
+        private byte[] aad;
+        private byte[] aadDigest;
+        private String recipientCertificateFingerprint;
+        private byte[] envelopeBytes;
+        private byte[] envelopeDigest;
         private String kcv;
         private String operationId;
 
@@ -1680,20 +1823,124 @@ public class FeignKmsClient implements KmsClient {
             this.derivationVersion = derivationVersion;
         }
 
-        public byte[] getWrapped() {
-            return wrapped;
+        public String getPurpose() {
+            return purpose;
         }
 
-        public void setWrapped(byte[] wrapped) {
-            this.wrapped = wrapped;
+        public void setPurpose(String purpose) {
+            this.purpose = purpose;
         }
 
-        public String getWrappingAlgorithm() {
-            return wrappingAlgorithm;
+        public Long getBusinessKeyVersion() {
+            return businessKeyVersion;
         }
 
-        public void setWrappingAlgorithm(String wrappingAlgorithm) {
-            this.wrappingAlgorithm = wrappingAlgorithm;
+        public void setBusinessKeyVersion(Long businessKeyVersion) {
+            this.businessKeyVersion = businessKeyVersion;
+        }
+
+        public String getWrappingSuite() {
+            return wrappingSuite;
+        }
+
+        public void setWrappingSuite(String wrappingSuite) {
+            this.wrappingSuite = wrappingSuite;
+        }
+
+        public String getEnvelopeVersion() {
+            return envelopeVersion;
+        }
+
+        public void setEnvelopeVersion(String envelopeVersion) {
+            this.envelopeVersion = envelopeVersion;
+        }
+
+        public byte[] getServerEphemeralPublicKey() {
+            return serverEphemeralPublicKey;
+        }
+
+        public void setServerEphemeralPublicKey(byte[] serverEphemeralPublicKey) {
+            this.serverEphemeralPublicKey = serverEphemeralPublicKey;
+        }
+
+        public byte[] getHkdfSalt() {
+            return hkdfSalt;
+        }
+
+        public void setHkdfSalt(byte[] hkdfSalt) {
+            this.hkdfSalt = hkdfSalt;
+        }
+
+        public String getHkdfContextVersion() {
+            return hkdfContextVersion;
+        }
+
+        public void setHkdfContextVersion(String hkdfContextVersion) {
+            this.hkdfContextVersion = hkdfContextVersion;
+        }
+
+        public byte[] getNonce() {
+            return nonce;
+        }
+
+        public void setNonce(byte[] nonce) {
+            this.nonce = nonce;
+        }
+
+        public byte[] getCiphertext() {
+            return ciphertext;
+        }
+
+        public void setCiphertext(byte[] ciphertext) {
+            this.ciphertext = ciphertext;
+        }
+
+        public byte[] getAuthenticationTag() {
+            return authenticationTag;
+        }
+
+        public void setAuthenticationTag(byte[] authenticationTag) {
+            this.authenticationTag = authenticationTag;
+        }
+
+        public byte[] getAad() {
+            return aad;
+        }
+
+        public void setAad(byte[] aad) {
+            this.aad = aad;
+        }
+
+        public byte[] getAadDigest() {
+            return aadDigest;
+        }
+
+        public void setAadDigest(byte[] aadDigest) {
+            this.aadDigest = aadDigest;
+        }
+
+        public String getRecipientCertificateFingerprint() {
+            return recipientCertificateFingerprint;
+        }
+
+        public void setRecipientCertificateFingerprint(String recipientCertificateFingerprint) {
+            this.recipientCertificateFingerprint = recipientCertificateFingerprint;
+        }
+
+        public byte[] getEnvelopeBytes() {
+            return envelopeBytes;
+        }
+
+        public void setEnvelopeBytes(byte[] envelopeBytes) {
+            this.envelopeBytes = envelopeBytes;
+        }
+
+        public byte[] getEnvelopeDigest() {
+            return envelopeDigest;
+        }
+
+        public void setEnvelopeDigest(byte[] envelopeDigest) {
+            this.envelopeDigest = envelopeDigest;
         }
 
         public String getKcv() {
@@ -1941,6 +2188,8 @@ public class FeignKmsClient implements KmsClient {
         private Boolean mountReady;
         private List<String> algorithms;
         private List<String> wrapModes;
+        private List<String> derivedEnvelopeVersions;
+        private Boolean resultStoreReady;
 
         public String getProvider() {
             return provider;
@@ -2004,6 +2253,22 @@ public class FeignKmsClient implements KmsClient {
 
         public void setWrapModes(List<String> wrapModes) {
             this.wrapModes = wrapModes;
+        }
+
+        public List<String> getDerivedEnvelopeVersions() {
+            return derivedEnvelopeVersions;
+        }
+
+        public void setDerivedEnvelopeVersions(List<String> derivedEnvelopeVersions) {
+            this.derivedEnvelopeVersions = derivedEnvelopeVersions;
+        }
+
+        public Boolean getResultStoreReady() {
+            return resultStoreReady;
+        }
+
+        public void setResultStoreReady(Boolean resultStoreReady) {
+            this.resultStoreReady = resultStoreReady;
         }
     }
 

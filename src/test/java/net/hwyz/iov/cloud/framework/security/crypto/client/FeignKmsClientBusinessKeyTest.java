@@ -351,6 +351,33 @@ class FeignKmsClientBusinessKeyTest {
     }
 
     @Test
+    void getCapabilities_mapsDerivedEnvelopeAndResultStore() {
+        FeignKmsClient.CapabilitiesResponse response = capabilitiesResponse();
+        response.setAlgorithms(List.of("ECDH_P256", "HKDF_SHA256", "AES_256_GCM"));
+        response.setDerivedEnvelopeVersions(List.of("v1"));
+        response.setResultStoreReady(true);
+        when(kmsFeignClient.getBusinessKeyCapabilities()).thenReturn(response);
+
+        KmsProviderCapabilities capabilities = kmsClient.getCapabilities();
+
+        assertTrue(capabilities.supportsDerivedEnvelope("v1"));
+        assertTrue(capabilities.supportsAlgorithm("ECDH_P256"));
+        assertTrue(capabilities.supportsAlgorithm("HKDF_SHA256"));
+        assertTrue(capabilities.supportsAlgorithm("AES_256_GCM"));
+        assertTrue(capabilities.resultStoreReady());
+    }
+
+    @Test
+    void getCapabilities_resultStoreFalse_mappedAsNotReady() {
+        FeignKmsClient.CapabilitiesResponse response = capabilitiesResponse();
+        response.setDerivedEnvelopeVersions(List.of("v1"));
+        response.setResultStoreReady(false);
+        when(kmsFeignClient.getBusinessKeyCapabilities()).thenReturn(response);
+
+        assertFalse(kmsClient.getCapabilities().resultStoreReady());
+    }
+
+    @Test
     void getCapabilities_failure_marksDown() {
         when(kmsFeignClient.getBusinessKeyCapabilities())
                 .thenThrow(feignException(404, "{\"errors\":[\"unsupported path\"]}"));

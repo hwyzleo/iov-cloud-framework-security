@@ -4,7 +4,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.PkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceMismatchException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateMaterialUnavailableException;
+import org.bouncycastle.asn1.x509.KeyUsage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -89,14 +91,17 @@ class CertificateEvidenceValidatorTest {
     @Test
     void validate_leafSelfSignedNotAnchored_chainUntrusted() throws Exception {
         KeyPair keyPair = TestPkiMaterial.generateKeyPair();
-        X509Certificate rogue = TestPkiMaterial.issueSelfSigned(
+        X509Certificate rogue = TestPkiMaterial.issueEndEntitySelfSigned(
                 new org.bouncycastle.asn1.x500.X500Name("CN=rogue"), keyPair,
-                java.math.BigInteger.valueOf(77));
+                java.math.BigInteger.valueOf(77), KeyUsage.keyAgreement,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
         CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
                 rogue.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
 
-        assertThrows(CertificateMaterialUnavailableException.class,
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
                 () -> validator.validate(evidence, null, trustedChainPolicy()));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CHAIN_NOT_TRUSTED, ex.rejectReason());
+        assertFalse(ex.isRetryable(), "链不可信为确定性失败，不可重试（CR-014 §7.2）");
     }
 
     @Test
@@ -111,7 +116,7 @@ class CertificateEvidenceValidatorTest {
     }
 
     @Test
-    void validate_expiredCertificate_failClosed() throws Exception {
+    void validate_expiredCertificate_rejectedNotRetryable() throws Exception {
         KeyPair keyPair = TestPkiMaterial.generateKeyPair();
         X509Certificate expired = TestPkiMaterial.issueEndEntitySelfSignedWithValidity(
                 new org.bouncycastle.asn1.x500.X500Name("CN=expired"), keyPair,
@@ -120,14 +125,15 @@ class CertificateEvidenceValidatorTest {
         CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
                 expired.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
 
-        CertificateMaterialUnavailableException ex = assertThrows(CertificateMaterialUnavailableException.class,
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
                 () -> validator.validate(evidence, null,
                         CertificateResolvePolicy.businessKeyWrap(true, false, false)));
-        assertTrue(ex.getMessage().contains("expired") || ex.getMessage().contains("not yet valid"));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CERTIFICATE_EXPIRED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
     }
 
     @Test
-    void validate_requiredEkuMissing_failClosed() throws Exception {
+    void validate_requiredEkuMissing_rejectedNotRetryable() throws Exception {
         // TestPkiMaterial.generate(false, null) 的叶子证书无 EKU
         TestPkiMaterial.Pki noEku = TestPkiMaterial.generate(false, null);
         CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
@@ -136,9 +142,47 @@ class CertificateEvidenceValidatorTest {
                 CertificateResolvePolicy.Scenario.BUSINESS_KEY_WRAP, true, false, false, false,
                 java.util.Set.of("RSA", "EC"), java.util.Set.of("clientAuth"));
 
-        CertificateMaterialUnavailableException ex = assertThrows(CertificateMaterialUnavailableException.class,
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
                 () -> validator.validate(evidence, null, policy));
-        assertTrue(ex.getMessage().contains("EKU"));
+        assertEquals(CertificateEvidenceRejectedException.Reason.EXTENDED_KEY_USAGE_NOT_PERMITTED,
+                ex.rejectReason());
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
+    void validate_ecMissingKeyAgreement_rejectedNotRetryable() throws Exception {
+        // EC 收方仅 digitalSignature，缺少 keyAgreement：确定性策略拒绝，不得降级为材料不可用。
+        KeyPair keyPair = TestPkiMaterial.generateKeyPair();
+        X509Certificate leaf = TestPkiMaterial.issueEndEntitySelfSigned(
+                new org.bouncycastle.asn1.x500.X500Name("CN=ec-dsig-only"), keyPair,
+                java.math.BigInteger.valueOf(99), KeyUsage.digitalSignature,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leaf.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
+                () -> validator.validate(evidence, null,
+                        CertificateResolvePolicy.businessKeyWrap(false, false, false)));
+        assertEquals(CertificateEvidenceRejectedException.Reason.KEY_USAGE_NOT_PERMITTED, ex.rejectReason());
+        assertEquals(CertificateEvidenceRejectedException.Action.DO_NOT_RETRY, ex.action());
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
+    void validate_ecNonP256Curve_rejectedNotRetryable() throws Exception {
+        KeyPair keyPair = TestPkiMaterial.generateKeyPair("secp384r1");
+        X509Certificate leaf = TestPkiMaterial.issueEndEntitySelfSigned(
+                new org.bouncycastle.asn1.x500.X500Name("CN=p384"), keyPair,
+                java.math.BigInteger.valueOf(100), KeyUsage.keyAgreement,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leaf.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
+                () -> validator.validate(evidence, null,
+                        CertificateResolvePolicy.businessKeyWrap(false, false, false)));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CURVE_NOT_ALLOWED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
     }
 
     @Test
@@ -167,28 +211,30 @@ class CertificateEvidenceValidatorTest {
     }
 
     @Test
-    void validate_revokedStatus_failClosed() throws Exception {
+    void validate_revokedStatus_rejectedNotRetryable() throws Exception {
         when(pkiClient.checkCertificateStatus(any())).thenReturn(status(
                 PkiClient.RevocationState.REVOKED, pki.leafCert()));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leafDer(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
+                () -> validator.validate(evidence, null,
+                        CertificateResolvePolicy.businessKeyWrap(true, false, true)));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CERTIFICATE_REVOKED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
+    void validate_unknownStatus_materialUnavailableRetryable() throws Exception {
+        when(pkiClient.checkCertificateStatus(any())).thenReturn(status(
+                PkiClient.RevocationState.UNKNOWN, pki.leafCert()));
         CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
                 leafDer(), List.of(), EvidenceSource.INLINE_DER);
 
         CertificateMaterialUnavailableException ex = assertThrows(CertificateMaterialUnavailableException.class,
                 () -> validator.validate(evidence, null,
                         CertificateResolvePolicy.businessKeyWrap(true, false, true)));
-        assertTrue(ex.getMessage().contains("REVOKED"));
-    }
-
-    @Test
-    void validate_unknownStatus_failClosed() throws Exception {
-        when(pkiClient.checkCertificateStatus(any())).thenReturn(status(
-                PkiClient.RevocationState.UNKNOWN, pki.leafCert()));
-        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
-                leafDer(), List.of(), EvidenceSource.INLINE_DER);
-
-        assertThrows(CertificateMaterialUnavailableException.class,
-                () -> validator.validate(evidence, null,
-                        CertificateResolvePolicy.businessKeyWrap(true, false, true)));
+        assertTrue(ex.isRetryable(), "无法证明 GOOD 属依赖暂时不可用，可重试（CR-014 §7.2）");
     }
 
     @Test

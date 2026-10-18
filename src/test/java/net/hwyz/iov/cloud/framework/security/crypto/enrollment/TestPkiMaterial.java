@@ -136,6 +136,15 @@ public final class TestPkiMaterial {
         return kpg.generateKeyPair();
     }
 
+    /**
+     * 生成指定曲线的 EC 密钥对（如 {@code secp384r1}），供曲线策略拒绝测试使用。
+     */
+    public static KeyPair generateKeyPair(String curve) throws Exception {
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+        kpg.initialize(new ECGenParameterSpec(curve));
+        return kpg.generateKeyPair();
+    }
+
     public static X509Certificate issueSelfSigned(X500Name subject, KeyPair keyPair, BigInteger serial) throws Exception {
         Date notBefore = Date.from(Instant.now().minusSeconds(3600));
         Date notAfter = Date.from(Instant.now().plusSeconds(365L * 24 * 3600));
@@ -163,6 +172,23 @@ public final class TestPkiMaterial {
                 subject, serial, Date.from(notBefore), Date.from(notAfter), subject, keyPair.getPublic());
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
         builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyAgreement));
+        return toCertificate(builder.build(
+                new JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.getPrivate())));
+    }
+
+    /**
+     * 生成自定义有效期、自定义 KeyUsage 的自签名终端实体证书，
+     * 供 KU/EKU/曲线策略拒绝测试使用（{@code keyUsageBits < 0} 表示不写 keyUsage 扩展）。
+     */
+    public static X509Certificate issueEndEntitySelfSigned(X500Name subject, KeyPair keyPair,
+                                                           BigInteger serial, int keyUsageBits,
+                                                           Instant notBefore, Instant notAfter) throws Exception {
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                subject, serial, Date.from(notBefore), Date.from(notAfter), subject, keyPair.getPublic());
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        if (keyUsageBits >= 0) {
+            builder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsageBits));
+        }
         return toCertificate(builder.build(
                 new JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.getPrivate())));
     }

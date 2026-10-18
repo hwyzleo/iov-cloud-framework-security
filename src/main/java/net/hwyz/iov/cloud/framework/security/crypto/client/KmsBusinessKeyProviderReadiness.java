@@ -30,6 +30,17 @@ public class KmsBusinessKeyProviderReadiness {
      */
     public static final String REQUIRED_WRAP_MODE = WrapMode.DEVICE_CERT_PUBLIC_KEY.name();
 
+    /**
+     * 派生封装（deriveAndWrap）必需的信封版本（FW-SEC-DSN-CR-014 §9）。
+     */
+    public static final String REQUIRED_DERIVED_ENVELOPE_VERSION = "v1";
+
+    /**
+     * 派生封装（deriveAndWrap）必需的密码学能力标记（FW-SEC-DSN-CR-014 §9）。
+     */
+    public static final java.util.List<String> REQUIRED_DERIVED_ALGORITHMS =
+            java.util.List.of("ECDH_P256", "HKDF_SHA256", "AES_256_GCM");
+
     private final KmsClient kmsClient;
     private final CryptoProperties properties;
     private final CryptoMetrics cryptoMetrics;
@@ -83,6 +94,16 @@ public class KmsBusinessKeyProviderReadiness {
                 log.warn("业务密钥 Provider 缺少必需 WrapMode: {}", REQUIRED_WRAP_MODE);
                 return false;
             }
+            // 派生封装（deriveAndWrap）READY 门禁：仅当该门面启用时校验（FW-SEC-DSN-CR-014 §9）。
+            if (properties.getProvisioning().isEnabled()) {
+                String derivedMismatch = derivedReadinessReason(this.capabilities);
+                if (derivedMismatch != null) {
+                    this.ready = false;
+                    this.reason = derivedMismatch;
+                    log.warn("deriveAndWrap Provider capability 未就绪: {}", derivedMismatch);
+                    return false;
+                }
+            }
             this.ready = true;
             this.reason = "ready";
             log.info("业务密钥 Provider capability READY: provider={}, apiVersion={}, mount={}, wrapModes={}",
@@ -114,6 +135,25 @@ public class KmsBusinessKeyProviderReadiness {
         if (!Objects.equals(cfg.getCapabilityPath(), EXPECTED_CAPABILITY_PATH)) {
             return "capability-path mismatch: expected=" + EXPECTED_CAPABILITY_PATH
                     + ", actual=" + cfg.getCapabilityPath();
+        }
+        return null;
+    }
+
+    /**
+     * deriveAndWrap READY 门禁（FW-SEC-DSN-CR-014 §9）：要求结果存储就绪、envelope v1 与
+     * P-256 ECDH / HKDF-SHA-256 / AES-256-GCM capability 可用。任一不满足即 DOWN。
+     */
+    private String derivedReadinessReason(KmsProviderCapabilities caps) {
+        if (!caps.resultStoreReady()) {
+            return "operation result store not ready (encrypted envelope TTL/idempotency unavailable)";
+        }
+        if (!caps.supportsDerivedEnvelope(REQUIRED_DERIVED_ENVELOPE_VERSION)) {
+            return "derived envelope version not supported: " + REQUIRED_DERIVED_ENVELOPE_VERSION;
+        }
+        for (String algorithm : REQUIRED_DERIVED_ALGORITHMS) {
+            if (!caps.supportsAlgorithm(algorithm)) {
+                return "required deriveAndWrap algorithm not supported: " + algorithm;
+            }
         }
         return null;
     }

@@ -4,10 +4,12 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.PkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertPem;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceMismatchException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateMaterialUnavailableException;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.io.ByteArrayInputStream;
+import java.security.AlgorithmParameters;
 import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.cert.CertPathBuilder;
@@ -18,6 +20,10 @@ import java.security.cert.PKIXBuilderParameters;
 import java.security.cert.TrustAnchor;
 import java.security.cert.X509CertSelector;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.ECPublicKey;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECParameterSpec;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -87,6 +93,18 @@ public class CertificateEvidenceValidator {
             fingerprint = sha256Hex(spki);
         }
         return new CertificateEvidence(null, spki, null, fingerprint, List.of(), source);
+    }
+
+    /**
+     * 解析公钥 SPKI 的公钥算法（{@code EC} / {@code RSA} / {@code Ed25519}）；
+     * 供收方套件推导（FW-SEC-DSN-CR-014 §7.1）使用。无法解析时抛
+     * {@link CertificateMaterialUnavailableException}（fail-closed）。
+     *
+     * @param spki 公钥 SPKI DER
+     * @return 公钥算法
+     */
+    public static String publicKeyAlgorithm(byte[] spki) {
+        return parsePublicKey(spki).getAlgorithm();
     }
 
     // ==================== 校验 ====================
@@ -188,15 +206,41 @@ public class CertificateEvidenceValidator {
     }
 
     private void verifyKeyAlgorithm(PublicKey publicKey, CertificateResolvePolicy policy) {
-        if (policy.allowedKeyAlgorithms().isEmpty()) {
-            return;
+        if (!policy.allowedKeyAlgorithms().isEmpty()) {
+            String algorithm = normalizeAlgorithm(publicKey.getAlgorithm());
+            boolean allowed = policy.allowedKeyAlgorithms().stream()
+                    .anyMatch(a -> normalizeAlgorithm(a).equals(algorithm));
+            if (!allowed) {
+                throw new CertificateEvidenceRejectedException(
+                        CertificateEvidenceRejectedException.Reason.KEY_ALGORITHM_NOT_ALLOWED,
+                        "Recipient key algorithm is not allowed: " + algorithm);
+            }
         }
-        String algorithm = normalizeAlgorithm(publicKey.getAlgorithm());
-        boolean allowed = policy.allowedKeyAlgorithms().stream()
-                .anyMatch(a -> normalizeAlgorithm(a).equals(algorithm));
-        if (!allowed) {
-            throw new CertificateMaterialUnavailableException(
-                    "Recipient key algorithm is not allowed: " + algorithm);
+        // FW-SEC-DSN-CR-014 §7.1：业务密钥封装场景的 EC 收方必须为 NIST P-256。
+        if (policy.scenario() == CertificateResolvePolicy.Scenario.BUSINESS_KEY_WRAP
+                && publicKey instanceof ECPublicKey ecPublicKey
+                && !isP256(ecPublicKey)) {
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CURVE_NOT_ALLOWED,
+                    "EC recipient certificate must use NIST P-256 (secp256r1) for keyprov wrap");
+        }
+    }
+
+    /**
+     * 是否为 NIST P-256 (secp256r1) 公钥。
+     */
+    private static boolean isP256(ECPublicKey publicKey) {
+        try {
+            AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
+            parameters.init(new ECGenParameterSpec("secp256r1"));
+            ECParameterSpec p256 = parameters.getParameterSpec(ECParameterSpec.class);
+            ECParameterSpec actual = publicKey.getParams();
+            return actual.getCurve().getField().getFieldSize() == 256
+                    && p256.getOrder().equals(actual.getOrder())
+                    && p256.getGenerator().equals(actual.getGenerator())
+                    && p256.getCofactor() == actual.getCofactor();
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -204,23 +248,51 @@ public class CertificateEvidenceValidator {
         Instant notBefore = leaf.getNotBefore().toInstant();
         Instant notAfter = leaf.getNotAfter().toInstant();
         if (!notAfter.isAfter(notBefore)) {
-            throw new CertificateMaterialUnavailableException(
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CERTIFICATE_VALIDITY_INVALID,
                     "Resolved certificate has an invalid validity period");
         }
         Instant now = Instant.now();
-        if (now.isBefore(notBefore) || now.isAfter(notAfter)) {
-            throw new CertificateMaterialUnavailableException(
-                    "Resolved certificate is expired or not yet valid");
+        if (now.isBefore(notBefore)) {
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CERTIFICATE_NOT_YET_VALID,
+                    "Resolved certificate is not yet valid");
+        }
+        if (now.isAfter(notAfter)) {
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CERTIFICATE_EXPIRED,
+                    "Resolved certificate is expired");
         }
     }
 
+    /**
+     * 证书用途校验（FW-SEC-DSN-CR-014 §7.1）。
+     * <p>
+     * EC 收方证书必须具备 {@code keyAgreement}；RSA 收方证书必须具备 {@code keyEncipherment}。
+     * {@code digitalSignature} 不等价于 {@code keyAgreement}。确定性策略不匹配直接抛出
+     * {@link CertificateEvidenceRejectedException}（不可重试），
+     * <strong>不得</strong>包装为 {@link CertificateMaterialUnavailableException}。
+     */
     private void verifyKeyUsage(X509Certificate leaf, CertificateResolvePolicy policy) {
         boolean[] keyUsage = leaf.getKeyUsage();
         if (keyUsage != null) {
-            boolean encryptionCapable = isTrue(keyUsage, 2) || isTrue(keyUsage, 4);
-            if (!encryptionCapable) {
-                throw new CertificateMaterialUnavailableException(
-                        "Certificate keyUsage does not permit encryption (keyEncipherment/keyAgreement)");
+            PublicKey publicKey = leaf.getPublicKey();
+            if (publicKey instanceof ECPublicKey) {
+                if (!isTrue(keyUsage, 4)) {
+                    throw new CertificateEvidenceRejectedException(
+                            CertificateEvidenceRejectedException.Reason.KEY_USAGE_NOT_PERMITTED,
+                            "EC recipient certificate must have keyAgreement for ECDH-ES wrap");
+                }
+            } else if (publicKey instanceof RSAPublicKey) {
+                if (!isTrue(keyUsage, 2)) {
+                    throw new CertificateEvidenceRejectedException(
+                            CertificateEvidenceRejectedException.Reason.KEY_USAGE_NOT_PERMITTED,
+                            "RSA recipient certificate must have keyEncipherment for RSA-OAEP wrap");
+                }
+            } else {
+                throw new CertificateEvidenceRejectedException(
+                        CertificateEvidenceRejectedException.Reason.UNSUPPORTED_RECIPIENT_KEY,
+                        "Unsupported recipient key type for key wrap: " + publicKey.getAlgorithm());
             }
         }
         if (!policy.requiredExtendedKeyUsage().isEmpty()) {
@@ -228,15 +300,19 @@ public class CertificateEvidenceValidator {
             try {
                 eku = leaf.getExtendedKeyUsage();
             } catch (Exception e) {
-                throw new CertificateMaterialUnavailableException("Failed to read certificate EKU", e);
+                throw new CertificateEvidenceRejectedException(
+                        CertificateEvidenceRejectedException.Reason.EXTENDED_KEY_USAGE_NOT_PERMITTED,
+                        "Failed to read certificate EKU", e);
             }
             if (eku == null) {
-                throw new CertificateMaterialUnavailableException(
+                throw new CertificateEvidenceRejectedException(
+                        CertificateEvidenceRejectedException.Reason.EXTENDED_KEY_USAGE_NOT_PERMITTED,
                         "Certificate has no EKU but policy requires: " + policy.requiredExtendedKeyUsage());
             }
             for (String required : policy.requiredExtendedKeyUsage()) {
                 if (!eku.contains(required)) {
-                    throw new CertificateMaterialUnavailableException(
+                    throw new CertificateEvidenceRejectedException(
+                            CertificateEvidenceRejectedException.Reason.EXTENDED_KEY_USAGE_NOT_PERMITTED,
                             "Certificate EKU does not contain required purpose: " + required);
                 }
             }
@@ -282,7 +358,9 @@ public class CertificateEvidenceValidator {
             parameters.addCertStore(certStore);
             CertPathBuilder.getInstance("PKIX").build(parameters);
         } catch (Exception e) {
-            throw new CertificateMaterialUnavailableException(
+            // 链不可信是证书固有属性：确定性、不可重试（FW-SEC-DSN-CR-014 §7.2）。
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CHAIN_NOT_TRUSTED,
                     "Certificate chain is not trusted by crypto.pki.certificate-resolution.trust-anchors-pem", e);
         }
     }
@@ -299,10 +377,18 @@ public class CertificateEvidenceValidator {
             result = pkiClient.checkCertificateStatus(
                     new PkiClient.CertificateStatusQuery(der, serial, fingerprint, Instant.now()));
         } catch (RuntimeException e) {
+            // OCSP/CRL 暂时不可达：依赖不可用、可重试（FW-SEC-DSN-CR-014 §7.2）。
             throw new CertificateMaterialUnavailableException(
                     "Certificate status check failed: " + e.getMessage(), e);
         }
+        if (result != null && result.revocationState() == PkiClient.RevocationState.REVOKED) {
+            // 已吊销是证书固有属性：确定性、不可重试。
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.CERTIFICATE_REVOKED,
+                    "Resolved certificate is REVOKED");
+        }
         if (result == null || result.revocationState() != PkiClient.RevocationState.GOOD) {
+            // UNKNOWN：无法证明 GOOD，按依赖不可用（可重试）处理。
             throw new CertificateMaterialUnavailableException(
                     "Certificate status is not GOOD: "
                             + (result == null ? "null" : result.revocationState()));

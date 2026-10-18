@@ -444,6 +444,16 @@ public class CryptoProperties {
          */
         private boolean legacyFacadeEnabled = false;
 
+        /**
+         * 调用方标识，参与 Provider 幂等请求摘要（FW-SEC-DSN-CR-014 §5.2）。
+         */
+        private String caller = "iov-framework-security";
+
+        /**
+         * 请求的根版本策略，参与 Provider 幂等请求摘要（FW-SEC-DSN-CR-014 §5.2）。
+         */
+        private String rootVersionPolicy = "latest";
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -466,6 +476,22 @@ public class CryptoProperties {
 
         public void setLegacyFacadeEnabled(boolean legacyFacadeEnabled) {
             this.legacyFacadeEnabled = legacyFacadeEnabled;
+        }
+
+        public String getCaller() {
+            return caller;
+        }
+
+        public void setCaller(String caller) {
+            this.caller = caller;
+        }
+
+        public String getRootVersionPolicy() {
+            return rootVersionPolicy;
+        }
+
+        public void setRootVersionPolicy(String rootVersionPolicy) {
+            this.rootVersionPolicy = rootVersionPolicy;
         }
     }
 

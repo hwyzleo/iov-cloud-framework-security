@@ -6,6 +6,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsDerivedKeyReferenc
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsRecipient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.OperationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.KeyMaterialModelMismatchException;
@@ -16,6 +17,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
 import net.hwyz.iov.cloud.framework.security.crypto.model.ProvisioningResult;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.RecipientRef;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence;
@@ -83,27 +85,38 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         requireNonBlank(idempotencyKey, "idempotencyKey");
         validateAnchorLevel(bizType, anchor);
 
-        KmsRecipient kmsRecipient = toDerivedRecipient(recipient);
+        ResolvedRecipient resolved = toDerivedRecipient(recipient);
         KmsDerivedKeyReference rootRef = new KmsDerivedKeyReference(
                 bizType.name(), ROOT_REF_PREFIX + bizType.prov().keyName());
-        DerivationInput input = new DerivationInput(anchor, purpose, context.derivationVersion());
+        // 套件由收方证书公钥算法推导；businessDomain=bizType、businessKeyVersion 来自上下文，
+        // 一并参与 Provider 幂等请求摘要（FW-SEC-DSN-CR-014 §5.2）。
+        DerivationInput input = new DerivationInput(anchor, purpose, context.derivationVersion(),
+                resolved.suite(), requestIdOf(recipient), bizType.name(), context.businessKeyVersion());
         OperationContext operation = new OperationContext(operationId, idempotencyKey);
 
         long startTime = System.currentTimeMillis();
         try {
-            DerivedWrappedKey result = kmsClient.deriveAndWrap(rootRef, input, kmsRecipient, operation);
+            DerivedWrappedKey result = kmsClient.deriveAndWrap(rootRef, input, resolved.recipient(), operation);
             long duration = System.currentTimeMillis() - startTime;
             // anchor.toString() 仅含摘要，绝不含锚原文；不回显 Wrapped Key 与 KCV
-            log.info("根派生封装成功: bizType={}, purpose={}, anchor={}, derivationVersion={}, duration={}ms",
-                    bizType.name(), purpose, anchor, context.derivationVersion(), duration);
+            log.info("根派生封装成功: bizType={}, purpose={}, anchor={}, derivationVersion={}, "
+                            + "wrappingSuite={}, businessKeyVersion={}, duration={}ms",
+                    bizType.name(), purpose, anchor, context.derivationVersion(),
+                    resolved.suite(), context.businessKeyVersion(), duration);
             cryptoMetrics.recordProvisioningWrap(duration);
             return result;
         } catch (Exception e) {
             cryptoMetrics.recordError();
-            log.error("根派生封装失败: bizType={}, purpose={}, anchor={}, derivationVersion={}",
-                    bizType.name(), purpose, anchor, context.derivationVersion(), e);
+            log.error("根派生封装失败: bizType={}, purpose={}, anchor={}, derivationVersion={}, wrappingSuite={}",
+                    bizType.name(), purpose, anchor, context.derivationVersion(), resolved.suite(), e);
             throw e;
         }
+    }
+
+    /**
+     * 已解析收方：KmsRecipient 与由公钥算法推导的封装套件。
+     */
+    private record ResolvedRecipient(KmsRecipient recipient, WrappingSuite suite) {
     }
 
     // ==================== 兼容门面（已废弃，fail-closed） ====================
@@ -183,20 +196,54 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
 
     // ==================== 收方映射与证书证据解析 ====================
 
-    private KmsRecipient toDerivedRecipient(RecipientRef recipient) {
+    private ResolvedRecipient toDerivedRecipient(RecipientRef recipient) {
         if (recipient instanceof RecipientRef.DeviceCertificate c) {
             CertificateEvidence evidence = resolveDeviceCertificate(c);
             String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
                     ? c.certSerial() : evidence.serial();
-            return KmsRecipient.deviceCertificate(certSerial, evidence.certificateDer(),
+            KmsRecipient kmsRecipient = KmsRecipient.deviceCertificate(certSerial, evidence.certificateDer(),
                     evidence.sha256Fingerprint(), evidence.spki(), null);
+            return new ResolvedRecipient(kmsRecipient, suiteFor(evidence.spki()));
         }
         if (recipient instanceof RecipientRef.PublicKey p) {
-            return KmsRecipient.publicKey(p.spki());
+            return new ResolvedRecipient(KmsRecipient.publicKey(p.spki()), suiteFor(p.spki()));
         }
         throw new CryptoException(CryptoException.Reason.UNSUPPORTED_RECIPIENT,
                 "deriveAndWrap 首期仅支持 DEVICE_CERT_PUBLIC_KEY 收方，got="
                         + recipient.getClass().getSimpleName()) {};
+    }
+
+    /**
+     * 由收方公钥算法推导封装套件（EC→ECDH-ES / RSA→RSA-OAEP）；不支持时 fail-closed
+     * （不可重试策略拒绝，FW-SEC-DSN-CR-014 §7.1）。
+     */
+    private WrappingSuite suiteFor(byte[] spki) {
+        if (spki == null || spki.length == 0) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved recipient SPKI is empty; cannot derive wrapping suite");
+        }
+        String keyAlgorithm;
+        try {
+            keyAlgorithm = CertificateEvidenceValidator.publicKeyAlgorithm(spki);
+        } catch (RuntimeException e) {
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.UNSUPPORTED_RECIPIENT_KEY,
+                    "Unsupported or malformed recipient public key SPKI for keyprov wrap", e);
+        }
+        WrappingSuite suite = WrappingSuite.forRecipientKeyAlgorithm(keyAlgorithm);
+        if (suite == null) {
+            throw new CertificateEvidenceRejectedException(
+                    CertificateEvidenceRejectedException.Reason.UNSUPPORTED_RECIPIENT_KEY,
+                    "No keyprov wrapping suite for recipient key algorithm: " + keyAlgorithm);
+        }
+        return suite;
+    }
+
+    private static String requestIdOf(RecipientRef recipient) {
+        if (recipient instanceof RecipientRef.DeviceCertificate c) {
+            return c.requestId();
+        }
+        return null;
     }
 
     /**

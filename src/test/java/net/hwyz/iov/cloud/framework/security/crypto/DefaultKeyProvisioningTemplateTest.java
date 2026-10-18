@@ -12,6 +12,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.DerivationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.RecipientRef;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
@@ -73,14 +74,15 @@ class DefaultKeyProvisioningTemplateTest {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         DerivedWrappedKey providerResult = new DerivedWrappedKey(
                 "logical-v2c-uplink", "openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD",
-                3, "v1", new byte[]{9, 8, 7}, "RSA-OAEP-SHA256", new byte[]{1, 2, 3}, "op-1");
+                3L, "v1", WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM,
+                new byte[]{9, 8, 7}, new byte[]{4, 5, 6}, new byte[]{1, 2, 3}, "op-1");
         when(kmsClient.deriveAndWrap(any(), any(), any(), any())).thenReturn(providerResult);
 
         DerivedWrappedKey result = template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
                 DerivationContext.v1(), "op-1", "idem-1");
 
-        assertArrayEquals(new byte[]{9, 8, 7}, result.wrapped());
+        assertArrayEquals(new byte[]{9, 8, 7}, result.envelopeBytes());
         assertArrayEquals(new byte[]{1, 2, 3}, result.kcv());
         assertEquals("v1", result.derivationVersion());
         assertEquals(3, result.rootKeyVersion());
@@ -103,7 +105,8 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_uplinkAndDownlink_purposeDomainSeparated() {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         when(kmsClient.deriveAndWrap(any(), any(), any(), any())).thenReturn(new DerivedWrappedKey(
-                "l", "ref", 1, "v1", new byte[]{1}, "RSA-OAEP-SHA256", new byte[]{2}, "op"));
+                "l", "ref", 1L, "v1", WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM,
+                new byte[]{1}, new byte[]{3}, new byte[]{2}, "op"));
 
         template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor, KeyPurpose.UPLINK_AEAD,
                 new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-u", "idem-u");

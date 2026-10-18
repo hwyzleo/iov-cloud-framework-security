@@ -10,6 +10,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertificateEnroll
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentRecord;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceMismatchException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateMaterialUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateReferenceAmbiguousException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
@@ -200,9 +201,11 @@ class CertificateResolutionIntegrationTest {
                 PkiClient.RevocationState.REVOKED));
         RecipientRef recipient = RecipientRef.DeviceCertificate.ofCertificate(pki.leafCert().getEncoded());
 
-        CertificateMaterialUnavailableException ex = assertThrows(CertificateMaterialUnavailableException.class,
+        // CR-014 §7.2：已吊销是证书固有属性，确定性拒绝且不可重试，不再归为材料不可用。
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
                 () -> template(new TestObjectProvider<>(), pkiClient).wrap(keyRef(), recipient, context()));
-        assertTrue(ex.getMessage().contains("REVOKED"));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CERTIFICATE_REVOKED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
     }
 
     @Test

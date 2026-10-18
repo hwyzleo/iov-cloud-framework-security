@@ -14,4 +14,12 @@ public class BusinessKeyIdempotencyConflictException extends CryptoException {
     public BusinessKeyIdempotencyConflictException(String message, Throwable cause) {
         super(Reason.BUSINESS_KEY_IDEMPOTENCY_CONFLICT, message, cause);
     }
+
+    /**
+     * 幂等冲突为确定性失败，不可重试（FW-SEC-DSN-CR-014 §7.2）。
+     */
+    @Override
+    public boolean isRetryable() {
+        return false;
+    }
 }

@@ -11,12 +11,17 @@ import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
+import net.hwyz.iov.cloud.framework.security.crypto.support.DerivedEnvelopeFixture;
+import net.hwyz.iov.cloud.framework.security.crypto.support.EcdhP256;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.bind.annotation.PostMapping;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.interfaces.ECPublicKey;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -57,28 +62,28 @@ class FeignKmsClientDerivedKeyTest {
     }
 
     @Test
-    void deriveAndWrap_success_mapsRequestAndResponse() {
+    void deriveAndWrap_success_mapsRequestAndResponse() throws Exception {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
-        FeignKmsClient.DerivedWrapResponse response = new FeignKmsClient.DerivedWrapResponse();
-        response.setLogicalKeyId("logical-1");
-        response.setKmsKeyRef("openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD");
-        response.setRootKeyVersion(3);
-        response.setDerivationVersion("v1");
-        response.setWrapped(new byte[]{9, 8, 7});
-        response.setWrappingAlgorithm("RSA-OAEP-SHA256");
-        response.setKcv("aabbcc");
-        response.setOperationId("op-1");
-        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(response);
+        KeyPair deviceKeys = EcdhP256.generateKeyPair();
+        byte[] businessKey = EcdhP256.randomBytes(32);
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) deviceKeys.getPublic(), businessKey, "req-1", "V2C_COMM_ROOT",
+                KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 3L, "v1", "fp1", "op-1",
+                "openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
 
         DerivedWrappedKey result = kmsClient.deriveAndWrap(
                 new KmsDerivedKeyReference("V2C_COMM_ROOT", "openbao-transit://transit/keys/v2c-comm-root"),
-                new DerivationInput(anchor, KeyPurpose.UPLINK_AEAD, "v1"),
+                input(),
                 KmsRecipient.deviceCertificate("cert-001", new byte[]{1, 2}, "fp1", new byte[]{3, 4}, null),
                 new OperationContext("op-1", "idem-1"));
 
         assertNotNull(result);
-        assertArrayEquals(new byte[]{9, 8, 7}, result.wrapped());
-        assertArrayEquals(new byte[]{(byte) 0xaa, (byte) 0xbb, (byte) 0xcc}, result.kcv());
+        assertEquals("logical-1", result.logicalKeyId());
+        assertTrue(result.envelopeBytes() != null && result.envelopeBytes().length > 0);
+        assertArrayEquals(built.envelope().kcv(), result.kcv());
+        assertArrayEquals(built.envelope().envelopeDigest(), result.envelopeDigest());
+        assertEquals(WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM, result.wrappingSuite());
         assertEquals(3, result.rootKeyVersion());
         assertEquals("v1", result.derivationVersion());
         assertEquals("op-1", result.operationId());
@@ -96,18 +101,22 @@ class FeignKmsClientDerivedKeyTest {
                         && "DEVICE_CERT_PUBLIC_KEY".equals(r.getRecipient().getMode())
                         && r.getRecipient().getCertificateDer() != null
                         && "fp1".equals(r.getRecipient().getSha256Fingerprint())
+                        && "ECDH-ES+A256GCM".equals(r.getWrappingSuite())
+                        && r.getRequestDigest() != null
                         && "op-1".equals(r.getOperationId())
                         && "idem-1".equals(r.getIdempotencyKey())));
         verify(cryptoMetrics).recordBusinessKeyProviderIdempotency("accepted");
     }
 
     @Test
-    void deriveAndWrap_http409_idempotencyConflict() {
+    void deriveAndWrap_http409_idempotencyConflict_notRetryable() {
         when(kmsFeignClient.deriveAndWrap(any()))
                 .thenThrow(feignException(409, "{\"code\":\"IDEMPOTENCY_CONFLICT\"}"));
 
-        assertThrows(BusinessKeyIdempotencyConflictException.class, () -> kmsClient.deriveAndWrap(
-                rootRef(), input(), recipient(), operation()));
+        BusinessKeyIdempotencyConflictException ex = assertThrows(
+                BusinessKeyIdempotencyConflictException.class, () -> kmsClient.deriveAndWrap(
+                        rootRef(), input(), recipient(), operation()));
+        assertFalse(ex.isRetryable(), "相同幂等键不同摘要为确定性冲突，不可重试（CR-014 §7.2）");
         verify(cryptoMetrics).recordBusinessKeyProviderIdempotency("conflict");
     }
 
@@ -161,20 +170,86 @@ class FeignKmsClientDerivedKeyTest {
     @Test
     void deriveAndWrap_invalidKcvHex_failsClosed() {
         FeignKmsClient.DerivedWrapResponse response = new FeignKmsClient.DerivedWrapResponse();
+        response.setWrappingSuite(WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM.wireName());
         response.setKcv("zz");
         when(kmsFeignClient.deriveAndWrap(any())).thenReturn(response);
 
-        assertThrows(Exception.class, () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
+    // ==================== 信封 v1 响应映射与 fail-closed（FW-SEC-DSN-CR-014 §4/§5） ====================
+
+    @Test
+    void deriveAndWrap_unknownWrappingSuite_failsClosed() {
+        FeignKmsClient.DerivedWrapResponse response = new FeignKmsClient.DerivedWrapResponse();
+        response.setWrappingSuite("MADE-UP-SUITE");
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(response);
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
+    @Test
+    void deriveAndWrap_aadDigestTampered_failsClosed() throws Exception {
+        DerivedEnvelopeFixture.Built built = validSealed();
+        built.response().getAad()[0] ^= 0x01;
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
+    @Test
+    void deriveAndWrap_envelopeDigestTampered_failsClosed() throws Exception {
+        DerivedEnvelopeFixture.Built built = validSealed();
+        built.response().getEnvelopeDigest()[0] ^= 0x01;
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
+    @Test
+    void deriveAndWrap_providerEnvelopeBytesDiverge_failsClosed() throws Exception {
+        DerivedEnvelopeFixture.Built built = validSealed();
+        built.response().getEnvelopeBytes()[0] ^= 0x01;
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
+    @Test
+    void deriveAndWrap_sameOperation_replayIsByteIdentical() throws Exception {
+        DerivedEnvelopeFixture.Built built = validSealed();
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        DerivedWrappedKey first = kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation());
+        DerivedWrappedKey replay = kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation());
+
+        assertArrayEquals(first.envelopeBytes(), replay.envelopeBytes());
+        assertArrayEquals(first.envelopeDigest(), replay.envelopeDigest());
+        assertArrayEquals(first.kcv(), replay.kcv());
+        assertEquals(first, replay);
     }
 
     // ==================== helpers ====================
+
+    private DerivedEnvelopeFixture.Built validSealed() throws Exception {
+        return DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) EcdhP256.generateKeyPair().getPublic(), EcdhP256.randomBytes(32),
+                "req-1", "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 1L, "v1",
+                "fp1", "op-1", "openbao-derived://ref"));
+    }
 
     private KmsDerivedKeyReference rootRef() {
         return new KmsDerivedKeyReference("V2C_COMM_ROOT", "openbao-transit://transit/keys/v2c-comm-root");
     }
 
     private DerivationInput input() {
-        return new DerivationInput(KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD, "v1");
+        return new DerivationInput(KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD, "v1",
+                WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM, "req-1", "V2C_COMM_ROOT", 0L);
     }
 
     private KmsRecipient recipient() {

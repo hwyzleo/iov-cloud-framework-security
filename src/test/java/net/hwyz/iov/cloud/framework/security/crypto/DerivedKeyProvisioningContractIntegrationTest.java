@@ -8,7 +8,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoAutoConfiguration;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalEncoding;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyEnvelopeCanonical;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.BusinessKeyIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.KeyMaterialModelMismatchException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
@@ -25,11 +28,15 @@ import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateResolvePolicy;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceCertificateRef;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.EvidenceSource;
+import net.hwyz.iov.cloud.framework.security.crypto.support.DerivedEnvelopeFixture;
+import net.hwyz.iov.cloud.framework.security.crypto.support.EcdhP256;
+import net.hwyz.iov.cloud.framework.security.crypto.support.ReferenceDerivedKeyUnwrapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.charset.StandardCharsets;
+import java.security.interfaces.ECPublicKey;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -57,7 +64,7 @@ class DerivedKeyProvisioningContractIntegrationTest {
     private BusinessKeyMaterialTemplate businessKeyMaterialTemplate;
     private CryptoAutoConfiguration configuration;
 
-    private byte[] leafCertDer;
+    private TestPkiMaterial.Pki pki;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -72,7 +79,8 @@ class DerivedKeyProvisioningContractIntegrationTest {
         certResolver = mock(CertResolver.class);
         configuration = new CryptoAutoConfiguration();
 
-        leafCertDer = TestPkiMaterial.generate().leafCert().getEncoded();
+        pki = TestPkiMaterial.generate();
+        byte[] leafCertDer = pki.leafCert().getEncoded();
         when(certResolver.resolve(any(DeviceCertificateRef.class), any(CertificateResolvePolicy.class)))
                 .thenReturn(CertificateEvidenceValidator.fromCertificateDer(
                         leafCertDer, EvidenceSource.PROVIDER_QUERY));
@@ -86,18 +94,15 @@ class DerivedKeyProvisioningContractIntegrationTest {
     }
 
     @Test
-    void endToEnd_deriveAndWrap_mapsGovernedRootRequestAndResponse() {
+    void endToEnd_deriveAndWrap_mapsGovernedRootRequestAndResponse() throws Exception {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
-        FeignKmsClient.DerivedWrapResponse response = new FeignKmsClient.DerivedWrapResponse();
-        response.setLogicalKeyId("logical-1");
-        response.setKmsKeyRef("openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD");
-        response.setRootKeyVersion(3);
-        response.setDerivationVersion("v1");
-        response.setWrapped(new byte[]{9, 8, 7});
-        response.setWrappingAlgorithm("RSA-OAEP-SHA256");
-        response.setKcv("0a0b0c");
-        response.setOperationId("op-1");
-        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(response);
+        byte[] businessKey = EcdhP256.randomBytes(32);
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) pki.leafKeyPair().getPublic(), businessKey, "req-1", "V2C_COMM_ROOT",
+                KeyPurpose.UPLINK_AEAD, "logical-1", 7L, 3L, "v1",
+                fingerprintHex(pki.leafCert().getEncoded()), "op-1",
+                "openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
 
         DerivedWrappedKey result = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
@@ -105,14 +110,21 @@ class DerivedKeyProvisioningContractIntegrationTest {
 
         assertNotNull(result);
         assertEquals("logical-1", result.logicalKeyId());
-        assertArrayEquals(new byte[]{9, 8, 7}, result.wrapped());
-        assertArrayEquals(new byte[]{0x0a, 0x0b, 0x0c}, result.kcv());
         assertEquals(3, result.rootKeyVersion());
         assertEquals("v1", result.derivationVersion());
         assertEquals("op-1", result.operationId());
+        assertArrayEquals(built.envelope().kcv(), result.kcv());
+        // framework 权威 canonical bytes 必须与 Provider 信封一致（字节级）。
+        assertArrayEquals(DerivedKeyEnvelopeCanonical.envelopeBytesWithoutDigest(built.envelope()),
+                result.envelopeBytes());
+
+        // 端到端解封：模拟 TBOX SEC/HSM 仅凭信封独立计算 KEK 并校验 KCV。
+        byte[] imported = ReferenceDerivedKeyUnwrapper.unwrap(pki.leafKeyPair().getPrivate(), built.envelope());
+        assertArrayEquals(businessKey, imported);
+        assertArrayEquals(EcdhP256.kcvOf(businessKey), built.envelope().kcv());
 
         // 请求映射：受治理根由 framework 按 bizType 策略映射，客户端不发送 rootKeyRef；
-        // 锚原文（参与派生）与 sha256 摘要（完整性比对）一并上送。
+        // 锚原文（参与派生）与 sha256 摘要（完整性比对）一并上送；套件与幂等请求摘要随请求上送。
         verify(kmsFeignClient).deriveAndWrap(argThat(r ->
                 "V2C_COMM_ROOT".equals(r.getBizType())
                         && "v1".equals(r.getDerivationVersion())
@@ -122,6 +134,8 @@ class DerivedKeyProvisioningContractIntegrationTest {
                         && VIN.equals(r.getAnchor().getValue())
                         && anchor.digest().equals(r.getAnchor().getDigest())
                         && "UPLINK_AEAD".equals(r.getPurpose())
+                        && "ECDH-ES+A256GCM".equals(r.getWrappingSuite())
+                        && r.getRequestDigest() != null
                         && r.getRecipient() != null
                         && "DEVICE_CERT_PUBLIC_KEY".equals(r.getRecipient().getMode())
                         && r.getRecipient().getCertificateDer() != null
@@ -134,17 +148,66 @@ class DerivedKeyProvisioningContractIntegrationTest {
     }
 
     @Test
-    void endToEnd_uplinkAndDownlink_purposeDomainSeparated() {
-        FeignKmsClient.DerivedWrapResponse response = new FeignKmsClient.DerivedWrapResponse();
-        response.setLogicalKeyId("l");
-        response.setKmsKeyRef("ref");
-        response.setRootKeyVersion(1);
-        response.setDerivationVersion("v1");
-        response.setWrapped(new byte[]{1});
-        response.setWrappingAlgorithm("RSA-OAEP-SHA256");
-        response.setKcv("02");
-        response.setOperationId("op");
-        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(response);
+    void endToEnd_deriveAndWrap_replayIsByteIdentical() throws Exception {
+        KeyAnchor anchor = KeyAnchor.vin(VIN);
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) pki.leafKeyPair().getPublic(), EcdhP256.randomBytes(32), "req-1",
+                "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 7L, 3L, "v1",
+                fingerprintHex(pki.leafCert().getEncoded()), "op-1", "openbao-derived://ref"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        DerivedWrappedKey first = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
+                KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
+                DerivationContext.v1(), "op-1", "idem-1");
+        DerivedWrappedKey replay = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
+                KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
+                DerivationContext.v1(), "op-1", "idem-1");
+
+        assertArrayEquals(first.envelopeBytes(), replay.envelopeBytes());
+        assertArrayEquals(first.envelopeDigest(), replay.envelopeDigest());
+        assertEquals(first, replay);
+    }
+
+    @Test
+    void endToEnd_sameOperationDifferentRequestDigest_conflictsNotRetryable() {
+        when(kmsFeignClient.deriveAndWrap(any()))
+                .thenThrow(feignException(409, "{\"code\":\"IDEMPOTENCY_CONFLICT\"}"));
+
+        BusinessKeyIdempotencyConflictException ex = assertThrows(
+                BusinessKeyIdempotencyConflictException.class, () -> provisioningTemplate.deriveAndWrap(
+                        BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
+                        new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(),
+                        "op-1", "idem-1"));
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
+    void endToEnd_sensitiveMaterialNotLeakedInToString() throws Exception {
+        KeyAnchor anchor = KeyAnchor.vin(VIN);
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) pki.leafKeyPair().getPublic(), EcdhP256.randomBytes(32), "req-1",
+                "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 7L, 3L, "v1",
+                fingerprintHex(pki.leafCert().getEncoded()), "op-1", "openbao-derived://ref"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        DerivedWrappedKey result = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
+                KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
+                DerivationContext.v1(), "op-1", "idem-1");
+
+        // 敏感信息扫描：信封/KCV 只输出长度，不展开 bytes（CR-014 §10）。
+        String description = result.toString() + "|" + built.envelope();
+        assertFalse(description.contains(java.util.Base64.getEncoder()
+                .encodeToString(result.envelopeBytes())));
+        assertFalse(description.contains(java.util.Base64.getEncoder().encodeToString(result.kcv())));
+    }
+
+    @Test
+    void endToEnd_uplinkAndDownlink_purposeDomainSeparated() throws Exception {
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) pki.leafKeyPair().getPublic(), EcdhP256.randomBytes(32), "req-1",
+                "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 1L, "v1",
+                fingerprintHex(pki.leafCert().getEncoded()), "op-1", "openbao-derived://ref"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         RecipientRef recipient = new RecipientRef.DeviceCertificate("cert-001");
 
@@ -177,6 +240,10 @@ class DerivedKeyProvisioningContractIntegrationTest {
     }
 
     // ==================== helpers ====================
+
+    private static String fingerprintHex(byte[] certificateDer) {
+        return CanonicalEncoding.hexLower(CanonicalEncoding.sha256(certificateDer));
+    }
 
     private static <T> ObjectProvider<T> providerOf(T bean) {
         return new ObjectProvider<>() {

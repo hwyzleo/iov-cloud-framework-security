@@ -36,6 +36,8 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_EVIDENCE_MISMATCH,
         CERTIFICATE_REFERENCE_AMBIGUOUS,
         CERTIFICATE_MATERIAL_UNAVAILABLE,
+        // 证书策略拒绝（FW-SEC-DSN-CR-014 §7.2）：确定性、不可重试
+        CERTIFICATE_EVIDENCE_REJECTED,
         // 证书状态/吊销查询（FW-SEC-DSN-CR-010 §7）
         CERTIFICATE_STATUS_DEPENDENCY_UNAVAILABLE,
         CERTIFICATE_STATUS_TRUST_VALIDATION_FAILED,
@@ -56,5 +58,17 @@ public abstract class CryptoException extends RuntimeException {
 
     public Reason getReason() {
         return reason;
+    }
+
+    /**
+     * 该异常是否表示「可按预算重试」的瞬时失败（FW-SEC-DSN-CR-014 §7.2）。
+     * <p>
+     * 默认 {@code true}（材料/依赖暂时不可用）；证书策略拒绝、幂等冲突等确定性失败
+     * 覆写为 {@code false}，业务服务不得把此类异常标为可重试。
+     *
+     * @return true 表示可重试
+     */
+    public boolean isRetryable() {
+        return true;
     }
 }
