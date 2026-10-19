@@ -29,6 +29,8 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.LegacyRestPkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.PkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.PkiFeignClient;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalDerivedEnvelopeDigestVerifier;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedEnvelopeDigestVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.EnvelopeCodec;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertificateChainValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertificateEnrollmentResultStore;
@@ -213,6 +215,19 @@ public class CryptoAutoConfiguration {
                 deviceResolverProvider.getIfAvailable(),
                 certResolverProvider.getIfAvailable(),
                 evidenceValidatorProvider.getIfAvailable());
+    }
+
+    /**
+     * 公开 canonical envelope digest verifier（FW-SEC-DSN-CR-015 §4.3/§7）。
+     * <p>
+     * 入参只能是公开 {@code DerivedWrappedKeyEnvelopeView}；由 core canonical codec 从 view 重建
+     * 唯一 {@code envelopeDigest} 并恒定时间比较。与派生封装门面同开关（{@code crypto.provisioning.enabled}）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning", name = "enabled", havingValue = "true")
+    public DerivedEnvelopeDigestVerifier derivedEnvelopeDigestVerifier() {
+        return CanonicalDerivedEnvelopeDigestVerifier.instance();
     }
 
     @Bean

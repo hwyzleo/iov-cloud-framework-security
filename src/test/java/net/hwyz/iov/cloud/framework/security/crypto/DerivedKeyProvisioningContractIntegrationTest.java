@@ -8,6 +8,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsFeignClient;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoAutoConfiguration;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalDerivedEnvelopeDigestVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalEncoding;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyEnvelopeCanonical;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
@@ -140,6 +141,10 @@ class DerivedKeyProvisioningContractIntegrationTest {
                 DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1));
         assertFalse(DerivedEnvelopeCapability.supports(
                 DerivedEnvelopeCapability.PAR_PROTO_WIRE_MAPPER_V1));
+
+        // CR-015 §4.3/§7：公开 canonical verifier 直接接收公开 view，无需私有 envelope 类型。
+        assertTrue(DerivedEnvelopeCapability.coreDigestVerifyReady());
+        assertDoesNotThrow(() -> new CanonicalDerivedEnvelopeDigestVerifier().verify(result.envelope()));
 
         // 端到端解封：模拟 TBOX SEC/HSM 仅凭信封独立计算 KEK 并校验 KCV。
         byte[] imported = ReferenceDerivedKeyUnwrapper.unwrap(pki.leafKeyPair().getPrivate(), built.envelope());

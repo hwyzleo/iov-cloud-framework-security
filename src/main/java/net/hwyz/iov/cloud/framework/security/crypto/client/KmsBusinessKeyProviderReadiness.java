@@ -1,5 +1,6 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
+import net.hwyz.iov.cloud.framework.security.crypto.DerivedEnvelopeCapability;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.WrapMode;
@@ -140,10 +141,17 @@ public class KmsBusinessKeyProviderReadiness {
     }
 
     /**
-     * deriveAndWrap READY 门禁（FW-SEC-DSN-CR-014 §9）：要求结果存储就绪、envelope v1 与
-     * P-256 ECDH / HKDF-SHA-256 / AES-256-GCM capability 可用。任一不满足即 DOWN。
+     * deriveAndWrap READY 门禁（FW-SEC-DSN-CR-014 §9；FW-SEC-DSN-CR-015 §7）：要求
+     * core 结构化 view 与公开 canonical verifier（{@code CORE_ENVELOPE_DIGEST_VERIFY_V1}）就绪，
+     * 且结果存储就绪、envelope v1 与 P-256 ECDH / HKDF-SHA-256 / AES-256-GCM capability 可用。
+     * 任一不满足即 DOWN。
      */
     private String derivedReadinessReason(KmsProviderCapabilities caps) {
+        if (!DerivedEnvelopeCapability.coreDigestVerifyReady()) {
+            // core 结构化 view / 公开 verifier 不可用属本进程确定性失败，绝不降级解析私有 bytes。
+            return "core envelope view/verifier not ready: "
+                    + DerivedEnvelopeCapability.CORE_ENVELOPE_DIGEST_VERIFY_V1;
+        }
         if (!caps.resultStoreReady()) {
             return "operation result store not ready (encrypted envelope TTL/idempotency unavailable)";
         }
