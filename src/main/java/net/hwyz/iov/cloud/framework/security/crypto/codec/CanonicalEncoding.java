@@ -89,6 +89,43 @@ public final class CanonicalEncoding {
     }
 
     /**
+     * 小写十六进制解码（FW-SEC-DSN-CR-015 §4.1：将信封指纹还原为 32 字节证书摘要）。
+     * <p>
+     * 允许可选的 {@code 0x}/{@code 0X} 前缀；长度必须为偶数，且仅接受十六进制字符。
+     * 输入为 {@code null} 返回 {@code null}；空串返回空数组。非法输入抛
+     * {@link IllegalArgumentException}（调用方 fail-closed）。
+     *
+     * @param hex 十六进制字符串
+     * @return 解码字节
+     */
+    public static byte[] hexDecode(String hex) {
+        if (hex == null) {
+            return null;
+        }
+        String normalized = hex.trim();
+        if (normalized.startsWith("0x") || normalized.startsWith("0X")) {
+            normalized = normalized.substring(2);
+        }
+        if (normalized.isEmpty()) {
+            return new byte[0];
+        }
+        if (normalized.length() % 2 != 0) {
+            throw new IllegalArgumentException("hex length must be even: " + normalized.length());
+        }
+        int len = normalized.length() / 2;
+        byte[] out = new byte[len];
+        for (int i = 0; i < len; i++) {
+            int hi = Character.digit(normalized.charAt(i * 2), 16);
+            int lo = Character.digit(normalized.charAt(i * 2 + 1), 16);
+            if (hi < 0 || lo < 0) {
+                throw new IllegalArgumentException("hex contains non-hex characters");
+            }
+            out[i] = (byte) ((hi << 4) | lo);
+        }
+        return out;
+    }
+
+    /**
      * 恒定时间字节比较。
      *
      * @param a 期望值

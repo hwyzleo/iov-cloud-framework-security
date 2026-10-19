@@ -9,6 +9,8 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUn
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoOperationOutcomeUnknownException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKeyEnvelopeView;
+import net.hwyz.iov.cloud.framework.security.crypto.model.EcdhEsP256EnvelopeViewV1;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
@@ -37,6 +39,9 @@ import static org.mockito.Mockito.*;
 class FeignKmsClientDerivedKeyTest {
 
     private static final String VIN = "LSVAA4187N2123456";
+    /** 合法的 32 字节证书指纹（64 hex，CR-015 §4.1 要求结构化视图携带 32 字节证书摘要）。 */
+    private static final String FINGERPRINT =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     private CryptoProperties properties;
     private KmsFeignClient kmsFeignClient;
@@ -68,7 +73,7 @@ class FeignKmsClientDerivedKeyTest {
         byte[] businessKey = EcdhP256.randomBytes(32);
         DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
                 (ECPublicKey) deviceKeys.getPublic(), businessKey, "req-1", "V2C_COMM_ROOT",
-                KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 3L, "v1", "fp1", "op-1",
+                KeyPurpose.UPLINK_AEAD, "logical-1", 1L, 3L, "v1", FINGERPRINT, "op-1",
                 "openbao-derived://transit/v2c-comm-root/v1/" + anchor.digest() + "/UPLINK_AEAD"));
         when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
 
@@ -234,13 +239,60 @@ class FeignKmsClientDerivedKeyTest {
         assertEquals(first, replay);
     }
 
+    // ==================== 结构化信封视图投影（FW-SEC-DSN-CR-015 §4.1/§7） ====================
+
+    @Test
+    void deriveAndWrap_ecdhEsV1_projectsStructuredEnvelopeView() throws Exception {
+        DerivedEnvelopeFixture.Built built = validSealed();
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        DerivedWrappedKey result = kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation());
+
+        DerivedWrappedKeyEnvelopeView view = result.envelope();
+        assertNotNull(view, "ECDH-ES v1 成功结果必须携带结构化视图（禁止 envelope == null 回退，CR-015 §7/§8）");
+        assertInstanceOf(EcdhEsP256EnvelopeViewV1.class, view);
+        assertEquals(EcdhEsP256EnvelopeViewV1.ENVELOPE_FORMAT, view.envelopeFormat());
+        assertEquals(EcdhEsP256EnvelopeViewV1.FORMAT_VERSION_V1, view.formatVersion());
+        assertEquals(WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM, view.wrappingSuite());
+        assertArrayEquals(built.envelope().envelopeDigest(), view.envelopeDigest());
+        assertArrayEquals(built.envelope().kcv(), view.keyCheckValue());
+        // 顶层与视图 digest/KCV 一致（CR-015 §4.2）
+        assertArrayEquals(result.envelopeDigest(), view.envelopeDigest());
+        assertArrayEquals(result.kcv(), view.keyCheckValue());
+
+        EcdhEsP256EnvelopeViewV1 v1 = (EcdhEsP256EnvelopeViewV1) view;
+        assertArrayEquals(built.envelope().ciphertext(), v1.ciphertext());
+        assertArrayEquals(built.envelope().serverEphemeralPublicKey(), v1.serverEphemeralPublicKey());
+        assertArrayEquals(built.envelope().hkdfSalt(), v1.hkdfSalt());
+        assertArrayEquals(built.envelope().nonce(), v1.nonce());
+        assertArrayEquals(built.envelope().authenticationTag(), v1.authenticationTag());
+        assertArrayEquals(built.envelope().aad(), v1.canonicalAad());
+        assertEquals(1L, v1.businessKeyVersion());
+        assertEquals(1L, v1.rootKeyVersion());
+        assertEquals("logical-1", v1.logicalKeyId());
+        assertEquals("op-1", v1.operationId());
+    }
+
+    @Test
+    void deriveAndWrap_zeroBusinessKeyVersion_failsClosedAsStructuredView() throws Exception {
+        // 业务版本 0 非法（视图要求 1..2^63-1）：声明 STRUCTURED_ENVELOPE_VIEW_V1 后禁止回退私有 bytes
+        DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
+                (ECPublicKey) EcdhP256.generateKeyPair().getPublic(), EcdhP256.randomBytes(32),
+                "req-1", "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 1L, "v1",
+                FINGERPRINT, "op-1", "openbao-derived://ref"));
+        when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
+
+        assertThrows(CryptoDependencyUnavailableException.class,
+                () -> kmsClient.deriveAndWrap(rootRef(), input(), recipient(), operation()));
+    }
+
     // ==================== helpers ====================
 
     private DerivedEnvelopeFixture.Built validSealed() throws Exception {
         return DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
                 (ECPublicKey) EcdhP256.generateKeyPair().getPublic(), EcdhP256.randomBytes(32),
-                "req-1", "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 1L, "v1",
-                "fp1", "op-1", "openbao-derived://ref"));
+                "req-1", "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 1L, 1L, "v1",
+                FINGERPRINT, "op-1", "openbao-derived://ref"));
     }
 
     private KmsDerivedKeyReference rootRef() {

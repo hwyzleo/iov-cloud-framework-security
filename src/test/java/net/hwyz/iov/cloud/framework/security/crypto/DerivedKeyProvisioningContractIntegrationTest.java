@@ -18,8 +18,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
+import net.hwyz.iov.cloud.framework.security.crypto.model.EcdhEsP256EnvelopeViewV1;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
+import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.BusinessKeyCreateRequest;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.KeyMaterialPolicy;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.RecipientRef;
@@ -118,6 +120,27 @@ class DerivedKeyProvisioningContractIntegrationTest {
         assertArrayEquals(DerivedKeyEnvelopeCanonical.envelopeBytesWithoutDigest(built.envelope()),
                 result.envelopeBytes());
 
+        // CR-015 §4.1：ECDH-ES v1 成功结果必须携带结构化视图，业务消费者不再解析私有 bytes。
+        assertNotNull(result.envelope(), "ECDH-ES v1 结果不得出现 envelope=null");
+        assertEquals(EcdhEsP256EnvelopeViewV1.ENVELOPE_FORMAT, result.envelope().envelopeFormat());
+        assertEquals(EcdhEsP256EnvelopeViewV1.FORMAT_VERSION_V1, result.envelope().formatVersion());
+        assertEquals(WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM, result.envelope().wrappingSuite());
+        EcdhEsP256EnvelopeViewV1 view = (EcdhEsP256EnvelopeViewV1) result.envelope();
+        assertArrayEquals(built.envelope().ciphertext(), view.ciphertext(),
+                "结构化视图 ciphertext 必须等于 wrapped_key");
+        assertArrayEquals(built.envelope().aad(), view.canonicalAad());
+        assertArrayEquals(built.envelope().aadDigest(), view.aadDigest());
+        assertArrayEquals(result.envelopeDigest(), view.envelopeDigest());
+        assertArrayEquals(result.kcv(), view.keyCheckValue());
+        assertArrayEquals(CanonicalEncoding.hexDecode(built.envelope().recipientCertificateFingerprint()),
+                view.recipientCertificateDigest());
+        assertEquals("logical-1", view.logicalKeyId());
+        assertEquals(7L, view.businessKeyVersion());
+        assertTrue(DerivedEnvelopeCapability.supports(
+                DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1));
+        assertFalse(DerivedEnvelopeCapability.supports(
+                DerivedEnvelopeCapability.PAR_PROTO_WIRE_MAPPER_V1));
+
         // 端到端解封：模拟 TBOX SEC/HSM 仅凭信封独立计算 KEK 并校验 KCV。
         byte[] imported = ReferenceDerivedKeyUnwrapper.unwrap(pki.leafKeyPair().getPrivate(), built.envelope());
         assertArrayEquals(businessKey, imported);
@@ -205,7 +228,7 @@ class DerivedKeyProvisioningContractIntegrationTest {
     void endToEnd_uplinkAndDownlink_purposeDomainSeparated() throws Exception {
         DerivedEnvelopeFixture.Built built = DerivedEnvelopeFixture.seal(DerivedEnvelopeFixture.Params.of(
                 (ECPublicKey) pki.leafKeyPair().getPublic(), EcdhP256.randomBytes(32), "req-1",
-                "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 0L, 1L, "v1",
+                "V2C_COMM_ROOT", KeyPurpose.UPLINK_AEAD, "logical-1", 1L, 1L, "v1",
                 fingerprintHex(pki.leafCert().getEncoded()), "op-1", "openbao-derived://ref"));
         when(kmsFeignClient.deriveAndWrap(any())).thenReturn(built.response());
         KeyAnchor anchor = KeyAnchor.vin(VIN);

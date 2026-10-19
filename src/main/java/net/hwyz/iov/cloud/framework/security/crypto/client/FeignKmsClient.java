@@ -1,6 +1,7 @@
 package net.hwyz.iov.cloud.framework.security.crypto.client;
 
 import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalEncoding;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedEnvelopeViewFactory;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyEnvelopeCanonical;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyRequestDigest;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
@@ -14,6 +15,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKeyEnvelopeV1;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKeyEnvelopeView;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KdfParams;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
@@ -422,14 +424,16 @@ public class FeignKmsClient implements KmsClient {
     }
 
     /**
-     * 响应映射（FW-SEC-DSN-CR-014 §4/§5.1）：
+     * 响应映射（FW-SEC-DSN-CR-014 §4/§5.1；FW-SEC-DSN-CR-015 §4.1）：
      * <ol>
      *   <li>解析 {@code wrappingSuite}，未知即 fail-closed（依赖/契约异常）；</li>
      *   <li>解码 {@code kcv} 十六进制；</li>
      *   <li>由响应组装 {@link DerivedWrappedKeyEnvelopeV1} 并<strong>重算校验</strong>
      *       {@code envelopeDigest} 与 {@code aadDigest}；</li>
      *   <li>canonical 信封 bytes 由 framework 权威编码器重建，Provider 若回传 bytes 则须逐字节一致；</li>
-     *   <li>输出 {@link DerivedWrappedKey}（瞬时，仅元数据 + canonical 信封 bytes）。</li>
+     *   <li>ECDH-ES v1 由 canonical 信封构建结构化 {@link DerivedWrappedKeyEnvelopeView}（CR-015 §4.1），
+     *       业务消费者不再解析私有 bytes；</li>
+     *   <li>输出 {@link DerivedWrappedKey}（瞬时，视图 + 元数据 + opaque canonical 信封 bytes）。</li>
      * </ol>
      */
     private DerivedWrappedKey mapDerivedWrappedKey(DerivedWrapResponse response, DerivationInput input,
@@ -495,10 +499,33 @@ public class FeignKmsClient implements KmsClient {
                 response.getRootKeyVersion() != null ? response.getRootKeyVersion() : 0,
                 response.getDerivationVersion(),
                 suite,
+                structuredEnvelopeView(suite, envelope),
                 canonicalBytes,
                 envelope.envelopeDigest(),
                 kcv,
                 operationId);
+    }
+
+    /**
+     * 由 canonical 信封构建结构化视图（FW-SEC-DSN-CR-015 §4.1）。
+     * <p>
+     * 仅 ECDH-ES 套件具备首期结构化视图；非 ECDH-ES 返回 {@code null}（旧格式读取路径）。
+     * 声明 {@code STRUCTURED_ENVELOPE_VIEW_V1} 能力后，ECDH-ES v1 的成功结果
+     * <strong>不允许</strong>出现 {@code envelope == null}：视图构建失败即 fail-closed
+     * （禁止回退解析私有 envelopeBytes，CR-015 §7/§8）。
+     */
+    private DerivedWrappedKeyEnvelopeView structuredEnvelopeView(WrappingSuite suite,
+                                                                 DerivedWrappedKeyEnvelopeV1 envelope) {
+        if (suite == null || !suite.isEcdh()) {
+            return null;
+        }
+        try {
+            return DerivedEnvelopeViewFactory.toEcdhEsP256View(envelope);
+        } catch (RuntimeException e) {
+            throw new CryptoDependencyUnavailableException(
+                    "deriveAndWrap provider envelope cannot be projected to structured view v1 "
+                            + "(FW-SEC-DSN-CR-015 §4.1): " + e.getMessage(), e);
+        }
     }
 
     private static KeyPurpose parsePurpose(String purpose) {
