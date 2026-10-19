@@ -37,7 +37,7 @@ public final class ImportProofCapability {
     // ==== 自检固定向量（canonical proofInputV1） ====
 
     static final String SELF_CHECK_REQUEST_ID = "req-1";
-    static final String SELF_CHECK_BUSINESS_DOMAIN = "V2C_COMM_ROOT";
+    static final String SELF_CHECK_BUSINESS_DOMAIN = "V2C_COMM";
     static final String SELF_CHECK_KEY_ID = "logical-v2c-uplink";
     static final long SELF_CHECK_BUSINESS_KEY_VERSION = 7L;
     static final String SELF_CHECK_ENVELOPE_DIGEST_HEX =
@@ -45,7 +45,7 @@ public final class ImportProofCapability {
     static final String SELF_CHECK_KCV_HEX = "0a0b0c";
     static final String SELF_CHECK_PROOF_INPUT_HEX =
             "000000166f70656e696f767c6b657970726f762d61636b7c7631000000057265712d31"
-                    + "0000000d5632435f434f4d4d5f524f4f54000000010100000020"
+                    + "000000085632435f434f4d4d000000010100000020"
                     + "d71ab5437ac14e57c51bb541ab2bad89c3f9a27e6fd8e7d7a7cfef05ad4dacc6"
                     + "000000080000000000000007"
                     + "0000002071ebe7d7d6c87699910d0093af8e99df3a149fd500cda64bd90505b4c127c933"
@@ -89,7 +89,7 @@ public final class ImportProofCapability {
      * @return READY 返回 true
      */
     public static boolean selfCheckReady() {
-        return publicApiAvailable() && canonicalVectorReady() && p1363ProviderReady();
+        return publicApiAvailable() && canonicalVectorReady() && domainGuardReady() && p1363ProviderReady();
     }
 
     /**
@@ -105,6 +105,34 @@ public final class ImportProofCapability {
         } catch (RuntimeException e) {
             return false;
         }
+    }
+
+    /**
+     * 业务域隔离自检：{@code V2C_COMM_ROOT}（根派生标识）、小写 {@code v2c_comm}、别名与 trim
+     * 变体均<strong>不得</strong>使 capability READY（FW-SEC-DSN-CR-016 §8.1）。
+     */
+    static boolean domainGuardReady() {
+        if (!ImportProofCanonical.isAllowedBusinessDomainV1(SELF_CHECK_BUSINESS_DOMAIN)) {
+            return false;
+        }
+        return rejectsDomain("V2C_COMM_ROOT", "v2c_comm", " V2C_COMM", "V2C_COMM ", "V2C_COMM_ALIAS");
+    }
+
+    private static boolean rejectsDomain(String... domains) {
+        for (String domain : domains) {
+            if (ImportProofCanonical.isAllowedBusinessDomainV1(domain)) {
+                return false;
+            }
+            try {
+                ImportProofCanonical.proofInputV1(SELF_CHECK_REQUEST_ID, domain, KeyPurpose.UPLINK_AEAD,
+                        SELF_CHECK_KEY_ID, SELF_CHECK_BUSINESS_KEY_VERSION,
+                        hex(SELF_CHECK_ENVELOPE_DIGEST_HEX), hex(SELF_CHECK_KCV_HEX));
+                return false;
+            } catch (IllegalArgumentException expected) {
+                // fail-closed：非 V2C_COMM 一律拒绝
+            }
+        }
+        return true;
     }
 
     /**

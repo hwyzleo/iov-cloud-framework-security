@@ -42,6 +42,15 @@ class ImportProofCapabilityTest {
     }
 
     @Test
+    void domainGuardRejectsRootIdentityAndLegacyVariants() {
+        // FW-SEC-DSN-CR-016 §8.1：V2C_COMM_ROOT/小写/别名/trim 变体不得使 capability READY
+        assertTrue(ImportProofCapability.domainGuardReady());
+        assertTrue(ImportProofCanonical.isAllowedBusinessDomainV1("V2C_COMM"));
+        assertFalse(ImportProofCanonical.isAllowedBusinessDomainV1("V2C_COMM_ROOT"));
+        assertFalse(ImportProofCanonical.isAllowedBusinessDomainV1("v2c_comm"));
+    }
+
+    @Test
     void selfCheckVectorEqualsCanonicalBuilderOutput() {
         byte[] input = ImportProofCanonical.proofInputV1(
                 ImportProofCapability.SELF_CHECK_REQUEST_ID,

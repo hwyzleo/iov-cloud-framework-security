@@ -191,12 +191,15 @@ class DefaultImportProofVerifierTest {
 
     @Test
     void verify_disallowedBusinessDomain_contextInvalid() throws Exception {
-        ImportProofRejectedException ex = assertThrows(ImportProofRejectedException.class,
-                () -> verifier.verify(request(validProof(REQUEST_ID, KeyPurpose.UPLINK_AEAD, KEY_ID,
-                                VERSION, envelopeDigest, KCV), material.certificateDigest(), REQUEST_ID,
-                        "V2C_COMM_ROOT_ALIAS", KeyPurpose.UPLINK_AEAD, KEY_ID, VERSION,
-                        envelopeDigest, KCV)));
-        assertEquals(ImportProofRejectReason.CONTEXT_INVALID, ex.rejectReason());
+        for (String domain : new String[]{"V2C_COMM_ROOT", "v2c_comm", "V2C_COMM_ROOT_ALIAS"}) {
+            ImportProofRejectedException ex = assertThrows(ImportProofRejectedException.class,
+                    () -> verifier.verify(request(validProof(REQUEST_ID, KeyPurpose.UPLINK_AEAD, KEY_ID,
+                                    VERSION, envelopeDigest, KCV), material.certificateDigest(), REQUEST_ID,
+                            domain, KeyPurpose.UPLINK_AEAD, KEY_ID, VERSION,
+                            envelopeDigest, KCV)));
+            assertEquals(ImportProofRejectReason.CONTEXT_INVALID, ex.rejectReason(),
+                    "businessDomain=" + domain + " 必须 fail-closed");
+        }
     }
 
     @Test

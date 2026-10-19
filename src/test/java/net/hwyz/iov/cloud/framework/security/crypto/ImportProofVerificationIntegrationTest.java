@@ -186,6 +186,20 @@ class ImportProofVerificationIntegrationTest {
     }
 
     @Test
+    void rootDerivationDomain_contextInvalid() throws Exception {
+        // FW-SEC-DSN-CR-016 §3/§4.1：V2C_COMM_ROOT 为根派生标识、非业务域，必须拒绝
+        for (String domain : new String[]{"V2C_COMM_ROOT", "v2c_comm", "V2C_COMM_ALIAS"}) {
+            ImportProofVerificationRequest request = new ImportProofVerificationRequest(
+                    ImportProofAlgorithm.ECDSA_P256_SHA256_P1363, validProof(),
+                    DeviceCertificateRef.ofCertificate(material.certificateDer()),
+                    material.certificateDigest(), REQUEST_ID, domain,
+                    KeyPurpose.UPLINK_AEAD, KEY_ID, VERSION, envelopeDigest, KCV);
+            assertEquals(ImportProofRejectReason.CONTEXT_INVALID,
+                    rejection(() -> verifier.verify(request)), "businessDomain=" + domain);
+        }
+    }
+
+    @Test
     void otherDeviceCertificate_rejected() throws Exception {
         // 关闭信任链要求，聚焦验证“其他设备证书”的摘要绑定/签名归属拒绝
         // （信任链不可信另由证书策略路径覆盖）。

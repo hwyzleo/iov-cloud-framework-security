@@ -39,10 +39,13 @@ public final class ImportProofCanonical {
     public static final String PROOF_LABEL = "openiov|keyprov-ack|v1";
 
     /**
-     * 首期 proofInputV1 允许的业务域（FW-SEC-DSN-CR-016 §3：精确值、区分大小写，
-     * 禁止 trim、大小写转换、别名或 fallback）。
+     * 首期 proofInputV1 允许的业务域（FW-SEC-DSN-CR-016 §3/§4.1：精确值 {@code V2C_COMM}，
+     * 区分大小写，禁止 trim、大小写转换、别名或 fallback）。
+     * <p>
+     * {@code V2C_COMM_ROOT} 仅表示根派生标识，<strong>不是</strong>业务域，作为 proof
+     * businessDomain 必须 fail-closed 拒绝；{@link #isAllowedBusinessDomainV1} 只接受本常量。
      */
-    public static final String ALLOWED_BUSINESS_DOMAIN_V1 = "V2C_COMM_ROOT";
+    public static final String ALLOWED_BUSINESS_DOMAIN_V1 = "V2C_COMM";
 
     private static final Set<String> ALLOWED_BUSINESS_DOMAINS_V1 = Set.of(ALLOWED_BUSINESS_DOMAIN_V1);
 

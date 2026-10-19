@@ -22,7 +22,7 @@ import java.time.Instant;
  */
 public final class ImportProofFixture {
 
-    public static final String BUSINESS_DOMAIN = "V2C_COMM_ROOT";
+    public static final String BUSINESS_DOMAIN = "V2C_COMM";
 
     private ImportProofFixture() {
     }
