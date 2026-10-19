@@ -11,9 +11,13 @@ import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEncryptionTemplat
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCertEnrollmentTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultCryptoTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultImportProofVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultSigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultVmdBusinessKeyDirectoryResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.ImportProofReadiness;
+import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerifier;
+import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerificationHealthIndicator;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.VmdBusinessKeyDirectoryClient;
@@ -73,6 +77,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +101,18 @@ public class CryptoAutoConfiguration {
     @ConditionalOnMissingBean
     public AeadCipher aeadCipher() {
         return new AeadCipher();
+    }
+
+    /**
+     * 框架受信任时钟（FW-SEC-DSN-CR-016 §3）。
+     * <p>
+     * 供导入证明验签与证书证据校验统一取 {@code now}；默认系统 UTC，消费方/测试可提供自定义
+     * {@link Clock} Bean 覆盖以固定验证时刻。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public Clock cryptoTrustedClock() {
+        return Clock.systemUTC();
     }
 
     @Bean
@@ -250,8 +267,50 @@ public class CryptoAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public CertificateEvidenceValidator certificateEvidenceValidator(
-            ObjectProvider<PkiClient> pkiClientProvider, CryptoProperties properties) {
-        return new CertificateEvidenceValidator(pkiClientProvider, properties);
+            ObjectProvider<PkiClient> pkiClientProvider, CryptoProperties properties,
+            ObjectProvider<Clock> clockProvider) {
+        return new CertificateEvidenceValidator(pkiClientProvider, properties,
+                clockProvider.getIfAvailable());
+    }
+
+    /**
+     * 导入证明验签能力就绪门禁（FW-SEC-DSN-CR-016 §8）。
+     * <p>
+     * 校验 capability 静态自检、CertResolver 可用性与证书解析配置自洽；供 Health 与
+     * {@code require-ready-at-startup} 启动门禁复用。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.import-proof", name = "enabled", havingValue = "true")
+    public ImportProofReadiness importProofReadiness(CertResolver certResolver,
+                                                     CryptoProperties properties,
+                                                     Environment environment) {
+        boolean revocationEnabled = Boolean.TRUE.equals(
+                environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false));
+        return new ImportProofReadiness(properties, certResolver, revocationEnabled);
+    }
+
+    /**
+     * 导入证明验证门面（FW-SEC-DSN-CR-016 §3/§8）。
+     * <p>
+     * 受 {@code crypto.import-proof.enabled} 控制；<strong>不</strong>复用
+     * {@code crypto.provisioning.enabled}（发布顺序/依赖/故障影响不同）。
+     * {@code require-ready-at-startup=true} 且 capability 未 READY 时启动 fail-closed。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.import-proof", name = "enabled", havingValue = "true")
+    public ImportProofVerifier importProofVerifier(CertResolver certResolver,
+                                                   ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider,
+                                                   CryptoProperties properties,
+                                                   CryptoMetrics cryptoMetrics,
+                                                   ImportProofReadiness importProofReadiness,
+                                                   ObjectProvider<Clock> clockProvider) {
+        if (properties.getImportProof().isRequireReadyAtStartup()) {
+            importProofReadiness.verifyAtStartup();
+        }
+        return new DefaultImportProofVerifier(certResolver, evidenceValidatorProvider.getIfAvailable(),
+                properties, cryptoMetrics, clockProvider.getIfAvailable());
     }
 
     /**
@@ -480,6 +539,23 @@ public class CryptoAutoConfiguration {
                     resultStoreProvider.getIfAvailable() != null,
                     pkiClientProvider.getIfAvailable() != null,
                     directoryProvider.getIfAvailable() != null);
+        }
+    }
+
+    /**
+     * 导入证明验签能力健康（FW-SEC-DSN-CR-016 §8）：未启用报告 DISABLED，启用则按就绪情况
+     * 报告 NOT_READY/UP，供 VMD keyprov activation 门禁使用。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.health.HealthIndicator.class)
+    public static class ImportProofHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public ImportProofVerificationHealthIndicator importProofVerificationHealthIndicator(
+                CryptoProperties properties,
+                ObjectProvider<ImportProofReadiness> readinessProvider) {
+            return new ImportProofVerificationHealthIndicator(properties, readinessProvider.getIfAvailable());
         }
     }
 

@@ -12,6 +12,8 @@ import java.security.MessageDigest;
  *   <li>{@link #lengthPrefixed(byte[]...)} / {@link #lengthPrefixedUtf8(String...)}：
  *       每个元素编码为 {@code int32 大端长度 || 原始字节}，字段顺序由调用方固定；</li>
  *   <li>{@link #sha256(byte[])} / {@link #hexLower(byte[])}：摘要与十六进制规范化；</li>
+ *   <li>{@link #uint64be(long)} / {@link #unsignedVarint(long)}：导入证明 proofInput 的跨语言数值编码
+ *       （FW-SEC-DSN-CR-016 §3 / TBOX-SEC-DSN-CR-020 §7.3）；</li>
  *   <li>{@link #constantTimeEquals(byte[], byte[])}：恒定时间比较。</li>
  * </ul>
  * <strong>禁止</strong>使用本地默认字符集、平台换行或未定义的 JSON 序列化结果作为 KDF/AAD 输入。
@@ -122,6 +124,50 @@ public final class CanonicalEncoding {
             }
             out[i] = (byte) ((hi << 4) | lo);
         }
+        return out;
+    }
+
+    /**
+     * 固定 8 字节无符号大端编码（FW-SEC-DSN-CR-016 §3 / TBOX-SEC-DSN-CR-020 §7.3）。
+     * <p>
+     * 仅用于明确要求 {@code uint64be} 的 canonical 输入（如导入证明的 {@code businessKeyVersion}）。
+     * 调用方须保证语义范围为 {@code 1..2^63-1}（首字节最高位为 0）。
+     *
+     * @param value 非负长整型
+     * @return 8 字节大端编码
+     */
+    public static byte[] uint64be(long value) {
+        if (value < 0) {
+            throw new IllegalArgumentException("uint64be value must be non-negative: " + value);
+        }
+        return ByteBuffer.allocate(Long.BYTES).putLong(value).array();
+    }
+
+    /**
+     * 无符号 LEB128 varint 编码（FW-SEC-DSN-CR-016 §3 / TBOX-SEC-DSN-CR-020 §7.3）。
+     * <p>
+     * 首期用于 purpose 等小范围受治理枚举数值（如 {@code 1}→{@code 01}、{@code 2}→{@code 02}）。
+     *
+     * @param value 非负长整型
+     * @return varint 编码字节
+     */
+    public static byte[] unsignedVarint(long value) {
+        if (value < 0) {
+            throw new IllegalArgumentException("unsignedVarint value must be non-negative: " + value);
+        }
+        byte[] buffer = new byte[10];
+        int index = 0;
+        long remaining = value;
+        do {
+            byte current = (byte) (remaining & 0x7F);
+            remaining >>>= 7;
+            if (remaining != 0) {
+                current |= (byte) 0x80;
+            }
+            buffer[index++] = current;
+        } while (remaining != 0);
+        byte[] out = new byte[index];
+        System.arraycopy(buffer, 0, out, 0, index);
         return out;
     }
 

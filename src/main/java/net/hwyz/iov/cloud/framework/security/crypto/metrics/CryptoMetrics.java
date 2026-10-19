@@ -36,6 +36,8 @@ public class CryptoMetrics {
     private final Counter businessKeyMetadataCounter;
     private final Counter businessKeyRevokeCounter;
     private final Counter businessKeyDirectoryCounter;
+    private final Counter importProofVerifyCounter;
+    private final Counter importProofDependencyUnavailableCounter;
     private final Timer encryptTimer;
     private final Timer decryptTimer;
     private final Timer kmsCallTimer;
@@ -56,6 +58,7 @@ public class CryptoMetrics {
     private final Timer businessKeyMetadataTimer;
     private final Timer businessKeyRevokeTimer;
     private final Timer businessKeyDirectoryTimer;
+    private final Timer importProofVerifyTimer;
 
     public CryptoMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -143,6 +146,15 @@ public class CryptoMetrics {
                 .description("业务密钥目录解析次数")
                 .register(meterRegistry);
 
+        this.importProofVerifyCounter = Counter.builder("crypto.import-proof.verify.count")
+                .description("导入证明验签次数")
+                .register(meterRegistry);
+
+        this.importProofDependencyUnavailableCounter =
+                Counter.builder("crypto.import-proof.dependency-unavailable.count")
+                        .description("导入证明验签依赖/材料暂不可用次数")
+                        .register(meterRegistry);
+
         this.encryptTimer = Timer.builder("crypto.encrypt.duration")
                 .description("加密时延")
                 .register(meterRegistry);
@@ -221,6 +233,10 @@ public class CryptoMetrics {
 
         this.businessKeyDirectoryTimer = Timer.builder("crypto.business-key.directory.duration")
                 .description("业务密钥目录解析时延")
+                .register(meterRegistry);
+
+        this.importProofVerifyTimer = Timer.builder("crypto.import-proof.verify.duration")
+                .description("导入证明验签时延")
                 .register(meterRegistry);
     }
 
@@ -441,6 +457,36 @@ public class CryptoMetrics {
     }
 
     /**
+     * 记录导入证明验签成功（FW-SEC-DSN-CR-016 §8）。
+     *
+     * @param duration 耗时（毫秒）
+     */
+    public void recordImportProofVerify(long duration) {
+        importProofVerifyCounter.increment();
+        importProofVerifyTimer.record(duration, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录导入证明确定性拒绝（FW-SEC-DSN-CR-016 §8）。
+     * <p>
+     * reason 仅使用固定枚举（reject reason / certificate-evidence-rejected），
+     * 禁止 importProof/proofInput/证书序列号/摘要等高基数或敏感标签。
+     *
+     * @param reason 拒绝类别
+     */
+    public void recordImportProofRejection(String reason) {
+        meterRegistry.counter("crypto.import-proof.rejected.count",
+                "reason", normalizeImportProofRejectReason(reason)).increment();
+    }
+
+    /**
+     * 记录导入证明验签依赖/证书材料暂不可用（FW-SEC-DSN-CR-016 §7/§8，可重试语义）。
+     */
+    public void recordImportProofDependencyUnavailable() {
+        importProofDependencyUnavailableCounter.increment();
+    }
+
+    /**
      * 记录业务密钥 Provider 请求（FW-SEC-DSN-CR-011 §8.3）。
      * <p>
      * 标签仅使用固定枚举（operation/result），禁止 keyId/idempotencyKey/operationId/证书序列号/
@@ -555,6 +601,24 @@ public class CryptoMetrics {
             case "evidence_mismatch", "certificate_evidence_mismatch" -> "evidence-mismatch";
             case "reference_ambiguous", "certificate_reference_ambiguous" -> "reference-ambiguous";
             case "dependency_unavailable", "crypto_dependency_unavailable" -> "dependency-unavailable";
+            default -> "unknown";
+        };
+    }
+
+    private static String normalizeImportProofRejectReason(String reason) {
+        if (reason == null) {
+            return "unknown";
+        }
+        return switch (reason.trim().toLowerCase()) {
+            case "algorithm_not_allowed" -> "algorithm-not-allowed";
+            case "invalid_length" -> "invalid-length";
+            case "invalid_scalar" -> "invalid-scalar";
+            case "high_s" -> "high-s";
+            case "certificate_digest_mismatch" -> "certificate-digest-mismatch";
+            case "signature_invalid" -> "signature-invalid";
+            case "context_invalid" -> "context-invalid";
+            case "certificate_evidence_rejected", "certificateevidencerejectedexception" ->
+                    "certificate-evidence-rejected";
             default -> "unknown";
         };
     }

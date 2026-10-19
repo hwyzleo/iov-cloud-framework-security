@@ -186,6 +186,58 @@ class CertificateEvidenceValidatorTest {
     }
 
     @Test
+    void validate_importProofP256DigitalSignature_success() throws Exception {
+        KeyPair keyPair = TestPkiMaterial.generateKeyPair();
+        X509Certificate leaf = TestPkiMaterial.issueEndEntitySelfSigned(
+                new org.bouncycastle.asn1.x500.X500Name("CN=import-proof-dsig"), keyPair,
+                java.math.BigInteger.valueOf(101), KeyUsage.digitalSignature,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leaf.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidence result = validator.validate(evidence, null,
+                CertificateResolvePolicy.importProofVerify(false, false, false, java.util.Set.of()));
+
+        assertNotNull(result);
+        assertTrue(result.hasLeafDer());
+        assertTrue(result.hasSpki());
+    }
+
+    @Test
+    void validate_importProofNonP256Curve_rejectedNotRetryable() throws Exception {
+        KeyPair keyPair = TestPkiMaterial.generateKeyPair("secp384r1");
+        X509Certificate leaf = TestPkiMaterial.issueEndEntitySelfSigned(
+                new org.bouncycastle.asn1.x500.X500Name("CN=import-proof-p384"), keyPair,
+                java.math.BigInteger.valueOf(102), KeyUsage.digitalSignature,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leaf.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
+                () -> validator.validate(evidence, null,
+                        CertificateResolvePolicy.importProofVerify(false, false, false, java.util.Set.of())));
+        assertEquals(CertificateEvidenceRejectedException.Reason.CURVE_NOT_ALLOWED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
+    void validate_importProofMissingDigitalSignature_rejectedNotRetryable() throws Exception {
+        KeyPair keyPair = TestPkiMaterial.generateKeyPair();
+        X509Certificate leaf = TestPkiMaterial.issueEndEntitySelfSigned(
+                new org.bouncycastle.asn1.x500.X500Name("CN=import-proof-keyagreement"), keyPair,
+                java.math.BigInteger.valueOf(103), KeyUsage.keyAgreement,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        CertificateEvidence evidence = CertificateEvidenceValidator.fromCertificateDer(
+                leaf.getEncoded(), List.of(), EvidenceSource.INLINE_DER);
+
+        CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
+                () -> validator.validate(evidence, null,
+                        CertificateResolvePolicy.importProofVerify(false, false, false, java.util.Set.of())));
+        assertEquals(CertificateEvidenceRejectedException.Reason.KEY_USAGE_NOT_PERMITTED, ex.rejectReason());
+        assertFalse(ex.isRetryable());
+    }
+
+    @Test
     void validate_spkiOnly_allowedForCertEncryption() throws Exception {
         byte[] spki = pki.leafKeyPair().getPublic().getEncoded();
         CertificateEvidence evidence = CertificateEvidenceValidator.fromSpki(

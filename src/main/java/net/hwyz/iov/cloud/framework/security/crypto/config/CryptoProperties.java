@@ -72,6 +72,11 @@ public class CryptoProperties {
      */
     private Pki pki = new Pki();
 
+    /**
+     * 导入证明验签门面配置（FW-SEC-DSN-CR-016）
+     */
+    private ImportProof importProof = new ImportProof();
+
     public Kms getKms() {
         return kms;
     }
@@ -158,6 +163,14 @@ public class CryptoProperties {
 
     public void setPki(Pki pki) {
         this.pki = pki;
+    }
+
+    public ImportProof getImportProof() {
+        return importProof;
+    }
+
+    public void setImportProof(ImportProof importProof) {
+        this.importProof = importProof;
     }
 
     /**
@@ -1235,6 +1248,111 @@ public class CryptoProperties {
 
             public void setBaseBackoff(Duration baseBackoff) {
                 this.baseBackoff = baseBackoff;
+            }
+        }
+    }
+
+    /**
+     * 导入证明验签门面配置（FW-SEC-DSN-CR-016 §3/§7/§8）。
+     * <p>
+     * 前缀 {@code crypto.import-proof}。默认关闭，避免升级 framework 后改变既有行为；
+     * 与派生封装 {@code crypto.provisioning} 独立装配（发布顺序/依赖/故障影响不同）。
+     */
+    public static class ImportProof {
+        /**
+         * 是否装配 ImportProofVerifier 门面
+         */
+        private boolean enabled = false;
+
+        /**
+         * 启动时 capability 未 READY 是否 fail-closed（默认 false：仅上报 NOT_READY，不阻止启动）
+         */
+        private boolean requireReadyAtStartup = false;
+
+        /**
+         * 证书证据解析/校验策略
+         */
+        private Certificate certificate = new Certificate();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isRequireReadyAtStartup() {
+            return requireReadyAtStartup;
+        }
+
+        public void setRequireReadyAtStartup(boolean requireReadyAtStartup) {
+            this.requireReadyAtStartup = requireReadyAtStartup;
+        }
+
+        public Certificate getCertificate() {
+            return certificate;
+        }
+
+        public void setCertificate(Certificate certificate) {
+            this.certificate = certificate;
+        }
+
+        /**
+         * 导入证明设备证书策略（FW-SEC-DSN-CR-016 §6）。
+         */
+        public static class Certificate {
+            /**
+             * 是否必须取得叶子证书 DER
+             */
+            private boolean requireCertificate = true;
+
+            /**
+             * 是否要求证书链可验证到配置信任锚
+             */
+            private boolean requireTrustedChain = true;
+
+            /**
+             * 是否要求吊销状态为 GOOD（UNKNOWN 视为不可用）。
+             * 为 true 时必须同时启用 {@code crypto.pki.revocation.enabled}；dev/test 可显式关闭。
+             */
+            private boolean requireGoodStatus = true;
+
+            /**
+             * 必须包含的 EKU（空集表示不强制）
+             */
+            private List<String> requiredEku = List.of();
+
+            public boolean isRequireCertificate() {
+                return requireCertificate;
+            }
+
+            public void setRequireCertificate(boolean requireCertificate) {
+                this.requireCertificate = requireCertificate;
+            }
+
+            public boolean isRequireTrustedChain() {
+                return requireTrustedChain;
+            }
+
+            public void setRequireTrustedChain(boolean requireTrustedChain) {
+                this.requireTrustedChain = requireTrustedChain;
+            }
+
+            public boolean isRequireGoodStatus() {
+                return requireGoodStatus;
+            }
+
+            public void setRequireGoodStatus(boolean requireGoodStatus) {
+                this.requireGoodStatus = requireGoodStatus;
+            }
+
+            public List<String> getRequiredEku() {
+                return requiredEku;
+            }
+
+            public void setRequiredEku(List<String> requiredEku) {
+                this.requiredEku = requiredEku;
             }
         }
     }

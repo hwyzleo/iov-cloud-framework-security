@@ -95,8 +95,8 @@ class CryptoAutoConfigurationCertificateResolutionTest {
 
     @Test
     void certificateEvidenceValidator_alwaysAvailable() {
-        CertificateEvidenceValidator validator =
-                configuration.certificateEvidenceValidator(providerOf(null), properties);
+        CertificateEvidenceValidator validator = configuration.certificateEvidenceValidator(
+                providerOf(null), properties, providerOf(java.time.Clock.systemUTC()));
         assertNotNull(validator);
     }
 

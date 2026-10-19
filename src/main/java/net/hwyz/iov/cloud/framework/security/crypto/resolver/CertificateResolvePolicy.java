@@ -42,7 +42,12 @@ public record CertificateResolvePolicy(
         /**
          * 证书状态查询上下文解析（PkiClient.checkCertificateStatus）
          */
-        REVOCATION_CHECK
+        REVOCATION_CHECK,
+        /**
+         * 导入证明验签（ImportProofVerifier）：要求 P-256 且 KeyUsage 含 {@code digitalSignature}
+         * （FW-SEC-DSN-CR-016 §4/§6）
+         */
+        IMPORT_PROOF_VERIFY
     }
 
     public CertificateResolvePolicy {
@@ -77,5 +82,22 @@ public record CertificateResolvePolicy(
     public static CertificateResolvePolicy revocationCheck() {
         return new CertificateResolvePolicy(Scenario.REVOCATION_CHECK, true, false, true, false,
                 Set.of("RSA", "EC", "Ed25519"), Set.of());
+    }
+
+    /**
+     * 导入证明验签场景（FW-SEC-DSN-CR-016 §4/§6）：要求 EC 叶子 DER、P-256、
+     * KeyUsage 含 {@code digitalSignature}，可选受信链 / GOOD 状态 / EKU。
+     *
+     * @param requireCertificate  是否必须取得叶子证书 DER
+     * @param requireTrustedChain 是否要求证书链可验证到配置信任锚
+     * @param requireGoodStatus   是否要求吊销状态为 GOOD
+     * @param requiredEku         必须包含的 EKU（空集表示不强制）
+     */
+    public static CertificateResolvePolicy importProofVerify(boolean requireCertificate,
+                                                             boolean requireTrustedChain,
+                                                             boolean requireGoodStatus,
+                                                             Set<String> requiredEku) {
+        return new CertificateResolvePolicy(Scenario.IMPORT_PROOF_VERIFY, requireCertificate, false,
+                requireTrustedChain, requireGoodStatus, Set.of("EC"), requiredEku);
     }
 }

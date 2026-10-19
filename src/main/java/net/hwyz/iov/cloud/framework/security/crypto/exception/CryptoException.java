@@ -43,7 +43,10 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_STATUS_TRUST_VALIDATION_FAILED,
         CERTIFICATE_STATUS_PROTOCOL_ERROR,
         CERTIFICATE_STATUS_CONFIGURATION_INVALID,
-        CERTIFICATE_STATUS_OUTCOME_UNKNOWN
+        CERTIFICATE_STATUS_OUTCOME_UNKNOWN,
+        // 导入证明验签（FW-SEC-DSN-CR-016 §7）：确定性拒绝 / 能力未装配
+        IMPORT_PROOF_REJECTED,
+        IMPORT_PROOF_VERIFICATION_UNAVAILABLE
     }
 
     public CryptoException(Reason reason, String message) {

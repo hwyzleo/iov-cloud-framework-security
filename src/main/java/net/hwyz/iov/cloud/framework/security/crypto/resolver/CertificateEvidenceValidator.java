@@ -24,6 +24,7 @@ import java.security.interfaces.ECPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -47,11 +48,28 @@ public class CertificateEvidenceValidator {
 
     private final ObjectProvider<PkiClient> pkiClientProvider;
     private final CryptoProperties properties;
+    private final Clock clock;
 
     public CertificateEvidenceValidator(ObjectProvider<PkiClient> pkiClientProvider,
                                         CryptoProperties properties) {
+        this(pkiClientProvider, properties, Clock.systemUTC());
+    }
+
+    /**
+     * 使用框架受信任 {@link Clock} 的构造器（FW-SEC-DSN-CR-016 §3）。
+     * <p>
+     * 证书有效期与吊销状态 freshness 统一取 {@code clock.instant()}，调用方不得以任意历史时间
+     * 绕过证书状态；测试可通过注入固定 Clock 保证确定性。
+     *
+     * @param pkiClientProvider PKI 客户端提供者
+     * @param properties        配置属性
+     * @param clock             受信任时钟（为 null 时回退系统 UTC 时钟）
+     */
+    public CertificateEvidenceValidator(ObjectProvider<PkiClient> pkiClientProvider,
+                                        CryptoProperties properties, Clock clock) {
         this.pkiClientProvider = Objects.requireNonNull(pkiClientProvider, "pkiClientProvider must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
+        this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
     // ==================== 解析（不校验） ====================
@@ -217,12 +235,14 @@ public class CertificateEvidenceValidator {
             }
         }
         // FW-SEC-DSN-CR-014 §7.1：业务密钥封装场景的 EC 收方必须为 NIST P-256。
-        if (policy.scenario() == CertificateResolvePolicy.Scenario.BUSINESS_KEY_WRAP
+        // FW-SEC-DSN-CR-016 §4：导入证明验签场景的 EC 设备证书同样必须为 NIST P-256。
+        if ((policy.scenario() == CertificateResolvePolicy.Scenario.BUSINESS_KEY_WRAP
+                || policy.scenario() == CertificateResolvePolicy.Scenario.IMPORT_PROOF_VERIFY)
                 && publicKey instanceof ECPublicKey ecPublicKey
                 && !isP256(ecPublicKey)) {
             throw new CertificateEvidenceRejectedException(
                     CertificateEvidenceRejectedException.Reason.CURVE_NOT_ALLOWED,
-                    "EC recipient certificate must use NIST P-256 (secp256r1) for keyprov wrap");
+                    "EC certificate must use NIST P-256 (secp256r1) for " + policy.scenario());
         }
     }
 
@@ -252,7 +272,7 @@ public class CertificateEvidenceValidator {
                     CertificateEvidenceRejectedException.Reason.CERTIFICATE_VALIDITY_INVALID,
                     "Resolved certificate has an invalid validity period");
         }
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         if (now.isBefore(notBefore)) {
             throw new CertificateEvidenceRejectedException(
                     CertificateEvidenceRejectedException.Reason.CERTIFICATE_NOT_YET_VALID,
@@ -275,7 +295,14 @@ public class CertificateEvidenceValidator {
      */
     private void verifyKeyUsage(X509Certificate leaf, CertificateResolvePolicy policy) {
         boolean[] keyUsage = leaf.getKeyUsage();
-        if (keyUsage != null) {
+        if (policy.scenario() == CertificateResolvePolicy.Scenario.IMPORT_PROOF_VERIFY) {
+            // FW-SEC-DSN-CR-016 §4/§6：导入证明验签要求设备证书 KeyUsage 含 digitalSignature。
+            if (keyUsage != null && !isTrue(keyUsage, 0)) {
+                throw new CertificateEvidenceRejectedException(
+                        CertificateEvidenceRejectedException.Reason.KEY_USAGE_NOT_PERMITTED,
+                        "Device certificate must have digitalSignature for import-proof verification");
+            }
+        } else if (keyUsage != null) {
             PublicKey publicKey = leaf.getPublicKey();
             if (publicKey instanceof ECPublicKey) {
                 if (!isTrue(keyUsage, 4)) {
@@ -375,7 +402,7 @@ public class CertificateEvidenceValidator {
         PkiClient.CertificateStatusResult result;
         try {
             result = pkiClient.checkCertificateStatus(
-                    new PkiClient.CertificateStatusQuery(der, serial, fingerprint, Instant.now()));
+                    new PkiClient.CertificateStatusQuery(der, serial, fingerprint, clock.instant()));
         } catch (RuntimeException e) {
             // OCSP/CRL 暂时不可达：依赖不可用、可重试（FW-SEC-DSN-CR-014 §7.2）。
             throw new CertificateMaterialUnavailableException(
