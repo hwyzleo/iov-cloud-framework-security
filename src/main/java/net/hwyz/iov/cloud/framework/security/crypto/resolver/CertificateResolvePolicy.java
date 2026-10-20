@@ -47,7 +47,13 @@ public record CertificateResolvePolicy(
          * 导入证明验签（ImportProofVerifier）：要求 P-256 且 KeyUsage 含 {@code digitalSignature}
          * （FW-SEC-DSN-CR-016 §4/§6）
          */
-        IMPORT_PROOF_VERIFY
+        IMPORT_PROOF_VERIFY,
+        /**
+         * 统一 TBOX 设备证书 Profile（FW-SEC-DSN-CR-017 §5）：链/有效期/吊销复用本校验器，
+         * 单场景 KU/EKU 不在本层收紧——CA=false、P-256、双 KU、clientAuth、关键扩展与
+         * 身份绑定由 {@code DefaultTboxDeviceCertificateValidator} 分项校验（RD-017-4）。
+         */
+        TBOX_DEVICE_CERT_PROFILE
     }
 
     public CertificateResolvePolicy {
@@ -99,5 +105,22 @@ public record CertificateResolvePolicy(
                                                              Set<String> requiredEku) {
         return new CertificateResolvePolicy(Scenario.IMPORT_PROOF_VERIFY, requireCertificate, false,
                 requireTrustedChain, requireGoodStatus, Set.of("EC"), requiredEku);
+    }
+
+    /**
+     * 统一 TBOX 设备证书 Profile 场景（FW-SEC-DSN-CR-017 §5）：要求叶子 DER、
+     * 可选受信链 / GOOD 状态；公钥算法、曲线、双 KU、EKU 与关键扩展由
+     * {@code DefaultTboxDeviceCertificateValidator} 按 Profile 分项校验（RD-017-4），
+     * 本层不做单场景收紧。
+     *
+     * @param requireCertificate  是否必须取得叶子证书 DER
+     * @param requireTrustedChain 是否要求证书链可验证到配置信任锚
+     * @param requireGoodStatus   是否要求吊销状态为 GOOD
+     */
+    public static CertificateResolvePolicy tboxDeviceCertProfile(boolean requireCertificate,
+                                                                 boolean requireTrustedChain,
+                                                                 boolean requireGoodStatus) {
+        return new CertificateResolvePolicy(Scenario.TBOX_DEVICE_CERT_PROFILE, requireCertificate, false,
+                requireTrustedChain, requireGoodStatus, Set.of(), Set.of());
     }
 }

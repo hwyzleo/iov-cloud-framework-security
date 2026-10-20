@@ -14,12 +14,16 @@ import net.hwyz.iov.cloud.framework.security.crypto.DefaultDataKeyDistributionTe
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultImportProofVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultKeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultSigningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.DefaultTboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultVmdBusinessKeyDirectoryResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.ImportProofReadiness;
 import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerificationHealthIndicator;
+import net.hwyz.iov.cloud.framework.security.crypto.KeyprovCertificateProfileHealthIndicator;
+import net.hwyz.iov.cloud.framework.security.crypto.KeyprovReadiness;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
+import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.VmdBusinessKeyDirectoryClient;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
@@ -227,11 +231,62 @@ public class CryptoAutoConfiguration {
                                                            CryptoProperties properties,
                                                            ObjectProvider<DeviceResolver> deviceResolverProvider,
                                                            ObjectProvider<CertResolver> certResolverProvider,
-                                                           ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider) {
+                                                           ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider,
+                                                           ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
         return new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
                 deviceResolverProvider.getIfAvailable(),
                 certResolverProvider.getIfAvailable(),
-                evidenceValidatorProvider.getIfAvailable());
+                evidenceValidatorProvider.getIfAvailable(),
+                tboxValidatorProvider.getIfAvailable());
+    }
+
+    /**
+     * 统一 TBOX 设备证书 Profile 验证器（FW-SEC-DSN-CR-017 §4/§7/§8）。
+     * <p>
+     * 受 {@code crypto.keyprov.certificate-profile.enabled} 控制，与 provisioning/import-proof
+     * 独立装配（决策 3）。装配时供 deriveAndWrap 与 ImportProofVerifier 经 ObjectProvider 消费；
+     * {@code require-ready-at-startup=true} 且 Profile readiness 未就绪时启动 fail-closed。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.keyprov.certificate-profile", name = "enabled", havingValue = "true")
+    public TboxDeviceCertificateValidator tboxDeviceCertificateValidator(
+            ObjectProvider<CertResolver> certResolverProvider,
+            ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider,
+            CryptoProperties properties,
+            ObjectProvider<Clock> clockProvider,
+            ObjectProvider<KeyprovReadiness> keyprovReadinessProvider) {
+        KeyprovReadiness readiness = keyprovReadinessProvider.getIfAvailable();
+        if (properties.getKeyprov().getCertificateProfile().isRequireReadyAtStartup()) {
+            if (readiness == null) {
+                throw new IllegalStateException(
+                        "crypto.keyprov.certificate-profile.require-ready-at-startup=true requires "
+                                + "KeyprovReadiness bean (FW-SEC-DSN-CR-017 §9)");
+            }
+            readiness.verifyAtStartup();
+        }
+        log.info("统一 TBOX 设备证书 Profile 验证器装配完成: profile=TBOX_DEVICE_ECDH_ES_P256_V1");
+        return new DefaultTboxDeviceCertificateValidator(certResolverProvider.getIfAvailable(),
+                evidenceValidatorProvider.getIfAvailable(), properties, clockProvider.getIfAvailable());
+    }
+
+    /**
+     * Keyprov 证书 Profile / 完整 ECDH-ES v1 聚合就绪（FW-SEC-DSN-CR-017 §9）。
+     * <p>
+     * 恒装配（诊断用）：未启用时报告 DISABLED 原因；完整 {@code KEYPROV_ECDH_ES_V1_READY}
+     * 必须聚合 certificate-profile + provisioning + import-proof 及 envelope/verifier 能力。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public KeyprovReadiness keyprovReadiness(CryptoProperties properties,
+                                             ObjectProvider<TboxDeviceCertificateValidator> validatorProvider,
+                                             ObjectProvider<Clock> clockProvider,
+                                             ObjectProvider<CertResolver> certResolverProvider,
+                                             Environment environment) {
+        boolean revocationEnabled = Boolean.TRUE.equals(
+                environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false));
+        return new KeyprovReadiness(properties, validatorProvider, clockProvider,
+                certResolverProvider.getIfAvailable(), revocationEnabled);
     }
 
     /**
@@ -305,12 +360,14 @@ public class CryptoAutoConfiguration {
                                                    CryptoProperties properties,
                                                    CryptoMetrics cryptoMetrics,
                                                    ImportProofReadiness importProofReadiness,
-                                                   ObjectProvider<Clock> clockProvider) {
+                                                   ObjectProvider<Clock> clockProvider,
+                                                   ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
         if (properties.getImportProof().isRequireReadyAtStartup()) {
             importProofReadiness.verifyAtStartup();
         }
         return new DefaultImportProofVerifier(certResolver, evidenceValidatorProvider.getIfAvailable(),
-                properties, cryptoMetrics, clockProvider.getIfAvailable());
+                properties, cryptoMetrics, clockProvider.getIfAvailable(),
+                tboxValidatorProvider.getIfAvailable());
     }
 
     /**
@@ -556,6 +613,24 @@ public class CryptoAutoConfiguration {
                 CryptoProperties properties,
                 ObjectProvider<ImportProofReadiness> readinessProvider) {
             return new ImportProofVerificationHealthIndicator(properties, readinessProvider.getIfAvailable());
+        }
+    }
+
+    /**
+     * 统一 TBOX 设备证书 Profile 能力健康（FW-SEC-DSN-CR-017 §9）：未启用报告 DISABLED，
+     * 启用则按 Profile/完整聚合就绪情况报告 NOT_READY/UP，供 VMD keyprov activation 门禁使用。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.health.HealthIndicator.class)
+    @ConditionalOnProperty(prefix = "crypto.keyprov.certificate-profile", name = "enabled", havingValue = "true")
+    public static class KeyprovCertificateProfileHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public KeyprovCertificateProfileHealthIndicator keyprovCertificateProfileHealthIndicator(
+                CryptoProperties properties,
+                ObjectProvider<KeyprovReadiness> readinessProvider) {
+            return new KeyprovCertificateProfileHealthIndicator(properties, readinessProvider.getIfAvailable());
         }
     }
 

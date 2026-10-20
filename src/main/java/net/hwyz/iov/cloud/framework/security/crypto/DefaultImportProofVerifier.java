@@ -6,11 +6,15 @@ import net.hwyz.iov.cloud.framework.security.crypto.codec.ImportProofCanonical;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateMaterialUnavailableException;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateProfileRejectReason;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateProfileRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoDependencyUnavailableException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CryptoException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.ImportProofRejectedException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DeviceCertificateProfile;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
+import net.hwyz.iov.cloud.framework.security.crypto.model.ValidatedTboxDeviceCertificate;
 import net.hwyz.iov.cloud.framework.security.crypto.model.importproof.ImportProofAlgorithm;
 import net.hwyz.iov.cloud.framework.security.crypto.model.importproof.ImportProofRejectReason;
 import net.hwyz.iov.cloud.framework.security.crypto.model.importproof.ImportProofVerificationRequest;
@@ -60,17 +64,28 @@ public class DefaultImportProofVerifier implements ImportProofVerifier {
     private final CryptoProperties properties;
     private final CryptoMetrics cryptoMetrics;
     private final Clock clock;
+    private final TboxDeviceCertificateValidator tboxCertificateValidator;
 
     public DefaultImportProofVerifier(CertResolver certResolver,
                                       CertificateEvidenceValidator evidenceValidator,
                                       CryptoProperties properties,
                                       CryptoMetrics cryptoMetrics,
                                       Clock clock) {
+        this(certResolver, evidenceValidator, properties, cryptoMetrics, clock, null);
+    }
+
+    public DefaultImportProofVerifier(CertResolver certResolver,
+                                      CertificateEvidenceValidator evidenceValidator,
+                                      CryptoProperties properties,
+                                      CryptoMetrics cryptoMetrics,
+                                      Clock clock,
+                                      TboxDeviceCertificateValidator tboxCertificateValidator) {
         this.certResolver = Objects.requireNonNull(certResolver, "certResolver must not be null");
         this.evidenceValidator = evidenceValidator;
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.cryptoMetrics = cryptoMetrics;
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        this.tboxCertificateValidator = tboxCertificateValidator;
     }
 
     @Override
@@ -118,22 +133,20 @@ public class DefaultImportProofVerifier implements ImportProofVerifier {
                     request.businessDomain(), purpose, request.keyId(), businessKeyVersion,
                     envelopeDigest, keyCheckValue);
 
-            // 3. 证书解析 + 证据校验（P-256 / digitalSignature / 链 / 时间 / 状态 / EKU）
-            CertificateEvidence evidence = resolveEvidence(request.deviceCertificateRef());
-            if (!evidence.hasLeafDer()) {
-                throw new CryptoDependencyUnavailableException(
-                        "import proof verification requires leaf certificate DER (bare SPKI not permitted)");
-            }
+            // 3. 证书解析 + 统一 Profile 校验（CR-017 §8）：与 CR-014 共享同一
+            //    DeviceCertificateRef、同一 leaf DER 摘要与 freshness 语义（RD-017-2）。
+            ValidatedTboxDeviceCertificate validated = validateCertificate(request.deviceCertificateRef());
 
-            // 4. 常量时间证书策略摘要绑定
-            byte[] certificateDigest = CanonicalEncoding.sha256(evidence.certificateDer());
+            // 4. 常量时间证书策略摘要绑定（leaf DER digest；wire 摘要语义不变）
+            byte[] certificateDigest = bindingDigest(request.deviceCertificateRef(), validated);
             if (!CanonicalEncoding.constantTimeEquals(expectedDigest, certificateDigest)) {
-                throw reject(ImportProofRejectReason.CERTIFICATE_DIGEST_MISMATCH,
-                        "certificate policy digest does not match expected digest");
+                profileOrProofReject(expectedDigest, certificateDigest);
             }
 
             // 5/6. P1363 r/s 范围 + low-S 校验，并执行 ECDSA-SHA256 验签
-            PublicKey publicKey = parsePublicKey(evidence.spki());
+            PublicKey publicKey = validated != null
+                    ? validated.publicKey()
+                    : parsePublicKey(resolveEvidence(request.deviceCertificateRef()).spki());
             if (!(publicKey instanceof ECPublicKey)) {
                 throw new CertificateEvidenceRejectedException(
                         CertificateEvidenceRejectedException.Reason.UNSUPPORTED_RECIPIENT_KEY,
@@ -151,7 +164,8 @@ public class DefaultImportProofVerifier implements ImportProofVerifier {
             }
             return new VerifiedImportProof(request.proofAlgorithm(), certificateDigest, purpose,
                     CanonicalEncoding.sha256(proofInput), verifiedAt);
-        } catch (ImportProofRejectedException | CertificateEvidenceRejectedException e) {
+        } catch (ImportProofRejectedException | CertificateEvidenceRejectedException
+                 | CertificateProfileRejectedException e) {
             if (cryptoMetrics != null) {
                 cryptoMetrics.recordImportProofRejection(rejectReasonOf(e));
             }
@@ -164,6 +178,45 @@ public class DefaultImportProofVerifier implements ImportProofVerifier {
             log.error("导入证明验签失败（依赖/材料）: reason={}", reasonOf(e), e);
             throw e;
         }
+    }
+
+    private ValidatedTboxDeviceCertificate validateCertificate(DeviceCertificateRef ref) {
+        if (tboxCertificateValidator != null) {
+            return tboxCertificateValidator.validate(ref, DeviceCertificateProfile.TBOX_DEVICE_ECDH_ES_P256_V1);
+        }
+        return null;
+    }
+
+    /**
+     * 共享绑定摘要：Profile 装配时取统一验证结果的 leaf DER digest；否则回退既有
+     * {@code SHA-256(certificateDer)}。wire 摘要语义不变（FW-SEC-DSN-CR-017 决策 1）。
+     */
+    private byte[] bindingDigest(DeviceCertificateRef ref, ValidatedTboxDeviceCertificate validated) {
+        if (validated != null) {
+            byte[] digest = validated.certificatePolicyDigest();
+            if (digest != null) {
+                return digest;
+            }
+        }
+        CertificateEvidence evidence = resolveEvidence(ref);
+        if (!evidence.hasLeafDer()) {
+            throw new CryptoDependencyUnavailableException(
+                    "import proof verification requires leaf certificate DER (bare SPKI not permitted)");
+        }
+        return CanonicalEncoding.sha256(evidence.certificateDer());
+    }
+
+    /**
+     * 绑定不匹配拒绝：Profile 装配时以 CR-017 CERTIFICATE_BINDING_MISMATCH 分类（ECDSA Provider 调用前）；
+     * 未装配 Profile 时保持既有 ImportProofRejectedException(CERTIFICATE_DIGEST_MISMATCH)。
+     */
+    private void profileOrProofReject(byte[] expectedDigest, byte[] actualDigest) {
+        if (tboxCertificateValidator != null) {
+            throw new CertificateProfileRejectedException(CertificateProfileRejectReason.CERTIFICATE_BINDING_MISMATCH,
+                    "certificate binding mismatch: resolved certificate digest does not match expected digest");
+        }
+        throw reject(ImportProofRejectReason.CERTIFICATE_DIGEST_MISMATCH,
+                "certificate policy digest does not match expected digest");
     }
 
     private CertificateEvidence resolveEvidence(DeviceCertificateRef ref) {
@@ -214,6 +267,9 @@ public class DefaultImportProofVerifier implements ImportProofVerifier {
     private static String rejectReasonOf(RuntimeException e) {
         if (e instanceof ImportProofRejectedException rejected && rejected.rejectReason() != null) {
             return rejected.rejectReason().name();
+        }
+        if (e instanceof CertificateProfileRejectedException profile && profile.rejectReason() != null) {
+            return profile.rejectReason().name();
         }
         return e.getClass().getSimpleName();
     }

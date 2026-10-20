@@ -77,6 +77,11 @@ public class CryptoProperties {
      */
     private ImportProof importProof = new ImportProof();
 
+    /**
+     * 统一 TBOX 设备证书 Profile 配置（FW-SEC-DSN-CR-017）
+     */
+    private KeyprovProfile keyprov = new KeyprovProfile();
+
     public Kms getKms() {
         return kms;
     }
@@ -171,6 +176,14 @@ public class CryptoProperties {
 
     public void setImportProof(ImportProof importProof) {
         this.importProof = importProof;
+    }
+
+    public KeyprovProfile getKeyprov() {
+        return keyprov;
+    }
+
+    public void setKeyprov(KeyprovProfile keyprov) {
+        this.keyprov = keyprov;
     }
 
     /**
@@ -1353,6 +1366,107 @@ public class CryptoProperties {
 
             public void setRequiredEku(List<String> requiredEku) {
                 this.requiredEku = requiredEku;
+            }
+        }
+    }
+
+    /**
+     * 统一 TBOX 设备证书 Profile 配置（FW-SEC-DSN-CR-017）。
+     * <p>
+     * 前缀 {@code crypto.keyprov.certificate-profile}。默认关闭，避免升级 framework 后改变既有行为；
+     * 与派生封装 {@code crypto.provisioning}、导入证明 {@code crypto.import-proof} 独立装配
+     * （FW-SEC-DSN-CR-017 §9/决策 3）。关闭时不声明对应 capability，完整
+     * {@code KEYPROV_ECDH_ES_V1_READY} 聚合三者及 envelope/verifier 能力。
+     * <p>
+     * 类名不与既有 {@code KeyProv}（数据密钥下发门面）产生大小写冲突。
+     */
+    public static class KeyprovProfile {
+        /**
+         * 统一 TBOX 设备证书 Profile 能力配置
+         */
+        private CertificateProfile certificateProfile = new CertificateProfile();
+
+        public CertificateProfile getCertificateProfile() {
+            return certificateProfile;
+        }
+
+        public void setCertificateProfile(CertificateProfile certificateProfile) {
+            this.certificateProfile = certificateProfile;
+        }
+
+        /**
+         * 统一 TBOX 设备证书 Profile（crypto.keyprov.certificate-profile.*）。
+         * <p>
+         * Profile 固定为 TBOX_DEVICE_ECDH_ES_P256_V1（EC P-256 / CA=false / 双 KU /
+         * clientAuth-only EKU）；本配置只控制装配开关、启动门禁与链/状态校验深度。
+         */
+        public static class CertificateProfile {
+            /**
+             * 是否装配 TboxDeviceCertificateValidator 与 TBOX_DEVICE_CERT_PROFILE_ECDH_ES_P256_V1 capability
+             */
+            private boolean enabled = false;
+
+            /**
+             * 启动时 capability 未 READY 是否 fail-closed（默认 false：仅上报 NOT_READY，不阻止启动）
+             */
+            private boolean requireReadyAtStartup = false;
+
+            /**
+             * 是否必须取得叶子证书 DER
+             */
+            private boolean requireCertificate = true;
+
+            /**
+             * 是否要求证书链可验证到配置信任锚
+             */
+            private boolean requireTrustedChain = true;
+
+            /**
+             * 是否要求吊销状态为 GOOD（UNKNOWN 视为不可用）。
+             * 为 true 时必须同时启用 {@code crypto.pki.revocation.enabled}；
+             * 吊销组件未装配时 Profile/完整 Keyprov readiness 必须 DOWN（FW-SEC-DSN-CR-017 决策），
+             * 生产验证不得静默跳过吊销门禁。
+             */
+            private boolean requireGoodStatus = true;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public boolean isRequireReadyAtStartup() {
+                return requireReadyAtStartup;
+            }
+
+            public void setRequireReadyAtStartup(boolean requireReadyAtStartup) {
+                this.requireReadyAtStartup = requireReadyAtStartup;
+            }
+
+            public boolean isRequireCertificate() {
+                return requireCertificate;
+            }
+
+            public void setRequireCertificate(boolean requireCertificate) {
+                this.requireCertificate = requireCertificate;
+            }
+
+            public boolean isRequireTrustedChain() {
+                return requireTrustedChain;
+            }
+
+            public void setRequireTrustedChain(boolean requireTrustedChain) {
+                this.requireTrustedChain = requireTrustedChain;
+            }
+
+            public boolean isRequireGoodStatus() {
+                return requireGoodStatus;
+            }
+
+            public void setRequireGoodStatus(boolean requireGoodStatus) {
+                this.requireGoodStatus = requireGoodStatus;
             }
         }
     }

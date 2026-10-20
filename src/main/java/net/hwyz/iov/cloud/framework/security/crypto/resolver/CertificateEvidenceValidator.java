@@ -128,6 +128,16 @@ public class CertificateEvidenceValidator {
     // ==================== 校验 ====================
 
     /**
+     * 校验结果：规范化证据 + 吊销状态 freshness（FW-SEC-DSN-CR-017 §4）。
+     *
+     * @param evidence        已校验的规范化证据
+     * @param statusFreshUntil 吊销状态 freshness 截止（来自 status 响应 nextUpdate；
+     *                        {@code null} 仅表示不可缓存，不代表状态永久有效）
+     */
+    public record ValidatedCertificate(CertificateEvidence evidence, Instant statusFreshUntil) {
+    }
+
+    /**
      * 按调用场景策略统一校验证据。
      *
      * @param evidence 解析出的证据
@@ -137,13 +147,35 @@ public class CertificateEvidenceValidator {
      */
     public CertificateEvidence validate(CertificateEvidence evidence, DeviceCertificateRef ref,
                                         CertificateResolvePolicy policy) {
+        return validateInternal(evidence, ref, policy).evidence();
+    }
+
+    /**
+     * 按调用场景策略统一校验证据，并返回吊销状态 freshness（FW-SEC-DSN-CR-017）。
+     * <p>
+     * 供统一 TBOX 设备证书 Profile 验证器消费（{@code statusFreshUntil} = status 响应
+     * {@code nextUpdate}，无吊销组件/无 nextUpdate 时为 {@code null}，仅表示不可缓存，
+     * 不代表状态永久有效）。
+     *
+     * @param evidence 解析出的证据
+     * @param ref      原始引用（用于声明字段一致性比对，可空）
+     * @param policy   场景策略
+     * @return 规范化后的已校验证据 + 状态 freshness
+     */
+    public ValidatedCertificate validateWithFreshness(CertificateEvidence evidence, DeviceCertificateRef ref,
+                                                      CertificateResolvePolicy policy) {
+        return validateInternal(evidence, ref, policy);
+    }
+
+    private ValidatedCertificate validateInternal(CertificateEvidence evidence, DeviceCertificateRef ref,
+                                                  CertificateResolvePolicy policy) {
         Objects.requireNonNull(evidence, "evidence must not be null");
         Objects.requireNonNull(policy, "policy must not be null");
         Objects.requireNonNull(policy.scenario(), "policy.scenario must not be null");
 
         byte[] der = evidence.certificateDer();
         if (der == null || der.length == 0) {
-            return validateSpkiOnly(evidence, policy);
+            return new ValidatedCertificate(validateSpkiOnly(evidence, policy), null);
         }
 
         X509Certificate leaf = parse(der);
@@ -158,12 +190,14 @@ public class CertificateEvidenceValidator {
         if (policy.requireTrustedChain()) {
             verifyTrustedChain(leaf, evidence.chain());
         }
+        Instant statusFreshUntil = null;
         if (policy.requireGoodStatus()) {
-            verifyGoodStatus(der, actualSerial, actualFingerprint);
+            statusFreshUntil = verifyGoodStatusWithFreshness(der, actualSerial, actualFingerprint);
         }
 
-        return new CertificateEvidence(der, actualSpki, actualSerial, actualFingerprint,
+        CertificateEvidence validated = new CertificateEvidence(der, actualSpki, actualSerial, actualFingerprint,
                 evidence.chain(), evidence.source());
+        return new ValidatedCertificate(validated, statusFreshUntil);
     }
 
     private CertificateEvidence validateSpkiOnly(CertificateEvidence evidence,
@@ -295,6 +329,12 @@ public class CertificateEvidenceValidator {
      */
     private void verifyKeyUsage(X509Certificate leaf, CertificateResolvePolicy policy) {
         boolean[] keyUsage = leaf.getKeyUsage();
+        if (policy.scenario() == CertificateResolvePolicy.Scenario.TBOX_DEVICE_CERT_PROFILE) {
+            // 统一 Profile（FW-SEC-DSN-CR-017 RD-017-1/RD-017-4）：单场景 KU/EKU 不在本层收紧，
+            // CA=false、P-256、双 KU（digitalSignature+keyAgreement）、clientAuth、关键扩展与
+            // 身份绑定由 DefaultTboxDeviceCertificateValidator 分项校验并给出稳定 reason。
+            return;
+        }
         if (policy.scenario() == CertificateResolvePolicy.Scenario.IMPORT_PROOF_VERIFY) {
             // FW-SEC-DSN-CR-016 §4/§6：导入证明验签要求设备证书 KeyUsage 含 digitalSignature。
             if (keyUsage != null && !isTrue(keyUsage, 0)) {
@@ -392,7 +432,15 @@ public class CertificateEvidenceValidator {
         }
     }
 
-    private void verifyGoodStatus(byte[] der, String serial, String fingerprint) {
+    /**
+     * 吊销状态校验并返回 status freshness（FW-SEC-DSN-CR-017 §4）。
+     *
+     * @param der         叶子证书 DER
+     * @param serial      规范化 serial
+     * @param fingerprint SHA-256 指纹
+     * @return status 响应 {@code nextUpdate}（无则 {@code null}，仅表示不可缓存）
+     */
+    private Instant verifyGoodStatusWithFreshness(byte[] der, String serial, String fingerprint) {
         PkiClient pkiClient = pkiClientProvider != null ? pkiClientProvider.getIfAvailable() : null;
         if (pkiClient == null) {
             throw new CertificateMaterialUnavailableException(
@@ -420,6 +468,8 @@ public class CertificateEvidenceValidator {
                     "Certificate status is not GOOD: "
                             + (result == null ? "null" : result.revocationState()));
         }
+        // GOOD：返回 nextUpdate 作 freshness 截止；无 nextUpdate 返回 null（仅表示不可缓存）。
+        return result.nextUpdate();
     }
 
     // ==================== 工具 ====================
@@ -443,6 +493,32 @@ public class CertificateEvidenceValidator {
         } catch (Exception e) {
             throw new CertificateMaterialUnavailableException("Failed to parse certificate DER", e);
         }
+    }
+
+    /**
+     * 解析叶子证书 DER（FW-SEC-DSN-CR-017 §5 复用，避免 Profile 验证器重复解析）。
+     * <p>
+     * 仅解析叶子，<strong>不</strong>解析证书链（链校验仍由 {@link #verifyTrustedChain} 唯一负责）。
+     *
+     * @param certificateDer 叶子证书 DER
+     * @return 叶子证书
+     * @throws CertificateMaterialUnavailableException DER 非法（fail-closed）
+     */
+    public static X509Certificate parseLeaf(byte[] certificateDer) {
+        return parse(certificateDer);
+    }
+
+    /**
+     * 是否为 NIST P-256 (secp256r1) 公钥（FW-SEC-DSN-CR-017 RD-017-1）。
+     *
+     * @param publicKey 公钥
+     * @return true 表示 NIST P-256
+     */
+    public static boolean isP256PublicKey(PublicKey publicKey) {
+        if (!(publicKey instanceof ECPublicKey ecPublicKey)) {
+            return false;
+        }
+        return isP256(ecPublicKey);
     }
 
     private static PublicKey parsePublicKey(byte[] spki) {

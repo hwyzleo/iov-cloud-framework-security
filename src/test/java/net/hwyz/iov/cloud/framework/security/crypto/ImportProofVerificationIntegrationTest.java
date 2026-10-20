@@ -93,7 +93,7 @@ class ImportProofVerificationIntegrationTest {
         readiness = configuration.importProofReadiness(certResolver, properties, environment);
         verifier = configuration.importProofVerifier(certResolver,
                 new TestObjectProvider<>(evidenceValidator), properties, cryptoMetrics, readiness,
-                new TestObjectProvider<>(clock));
+                new TestObjectProvider<>(clock), new TestObjectProvider<>());
     }
 
     private byte[] validProof() throws Exception {
@@ -263,7 +263,7 @@ class ImportProofVerificationIntegrationTest {
         ImportProofVerifier statusVerifier = configuration.importProofVerifier(certResolver,
                 new TestObjectProvider<>(evidenceValidator), properties, cryptoMetrics,
                 configuration.importProofReadiness(certResolver, properties, environment),
-                new TestObjectProvider<>(clock));
+                new TestObjectProvider<>(clock), new TestObjectProvider<>());
 
         ImportProofVerificationRequest request = validRequest();
         CertificateMaterialUnavailableException ex = assertThrows(CertificateMaterialUnavailableException.class,
@@ -292,7 +292,7 @@ class ImportProofVerificationIntegrationTest {
         ImportProofVerifier revokedVerifier = configuration.importProofVerifier(certResolver,
                 new TestObjectProvider<>(evidenceValidator), properties, cryptoMetrics,
                 configuration.importProofReadiness(certResolver, properties, environment),
-                new TestObjectProvider<>(clock));
+                new TestObjectProvider<>(clock), new TestObjectProvider<>());
 
         CertificateEvidenceRejectedException ex = assertThrows(CertificateEvidenceRejectedException.class,
                 () -> revokedVerifier.verify(validRequest()));

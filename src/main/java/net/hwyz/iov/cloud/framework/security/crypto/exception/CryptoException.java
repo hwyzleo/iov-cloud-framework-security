@@ -38,6 +38,10 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_MATERIAL_UNAVAILABLE,
         // 证书策略拒绝（FW-SEC-DSN-CR-014 §7.2）：确定性、不可重试
         CERTIFICATE_EVIDENCE_REJECTED,
+        // 统一 TBOX 设备证书 Profile 拒绝（FW-SEC-DSN-CR-017 §10）：确定性、不可重试
+        CERTIFICATE_PROFILE_REJECTED,
+        // 统一 TBOX 设备证书 Profile 验证能力未装配（FW-SEC-DSN-CR-017 §10）
+        CERTIFICATE_PROFILE_UNAVAILABLE,
         // 证书状态/吊销查询（FW-SEC-DSN-CR-010 §7）
         CERTIFICATE_STATUS_DEPENDENCY_UNAVAILABLE,
         CERTIFICATE_STATUS_TRUST_VALIDATION_FAILED,

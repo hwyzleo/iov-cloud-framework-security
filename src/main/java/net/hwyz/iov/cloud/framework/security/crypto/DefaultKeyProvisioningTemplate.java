@@ -14,9 +14,11 @@ import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
+import net.hwyz.iov.cloud.framework.security.crypto.model.DeviceCertificateProfile;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
 import net.hwyz.iov.cloud.framework.security.crypto.model.ProvisioningResult;
+import net.hwyz.iov.cloud.framework.security.crypto.model.ValidatedTboxDeviceCertificate;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.RecipientRef;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
@@ -55,18 +57,28 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
     private final DeviceResolver deviceResolver;
     private final CertResolver certResolver;
     private final CertificateEvidenceValidator evidenceValidator;
+    private final TboxDeviceCertificateValidator tboxCertificateValidator;
     private final boolean legacyFacadeEnabled;
 
     public DefaultKeyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                           CryptoProperties properties, DeviceResolver deviceResolver,
                                           CertResolver certResolver,
                                           CertificateEvidenceValidator evidenceValidator) {
+        this(kmsClient, cryptoMetrics, properties, deviceResolver, certResolver, evidenceValidator, null);
+    }
+
+    public DefaultKeyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
+                                          CryptoProperties properties, DeviceResolver deviceResolver,
+                                          CertResolver certResolver,
+                                          CertificateEvidenceValidator evidenceValidator,
+                                          TboxDeviceCertificateValidator tboxCertificateValidator) {
         this.kmsClient = kmsClient;
         this.cryptoMetrics = cryptoMetrics;
         this.properties = properties;
         this.deviceResolver = deviceResolver;
         this.certResolver = certResolver;
         this.evidenceValidator = evidenceValidator;
+        this.tboxCertificateValidator = tboxCertificateValidator;
         this.legacyFacadeEnabled = properties.getProvisioning().isLegacyFacadeEnabled();
     }
 
@@ -198,6 +210,22 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
 
     private ResolvedRecipient toDerivedRecipient(RecipientRef recipient) {
         if (recipient instanceof RecipientRef.DeviceCertificate c) {
+            DeviceCertificateRef ref = new DeviceCertificateRef(c.certSerial(), c.requestId(),
+                    c.certificateDer(), c.spki(), c.sha256Fingerprint(), null, c.context());
+            // 统一 TBOX 设备证书 Profile 门禁（FW-SEC-DSN-CR-017 §7）：装配时单次解析 + 校验
+            // （链/有效期/吊销 + Profile 语义），Provider/HSM 调用前强制，证书策略失败调用恒为 0。
+            if (tboxCertificateValidator instanceof DefaultTboxDeviceCertificateValidator defaultValidator) {
+                DefaultTboxDeviceCertificateValidator.ProfileValidation validation =
+                        defaultValidator.validateWithEvidence(ref,
+                                DeviceCertificateProfile.TBOX_DEVICE_ECDH_ES_P256_V1);
+                requireFullProfile(validation.validated());
+                CertificateEvidence evidence = validation.evidence();
+                String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
+                        ? c.certSerial() : evidence.serial();
+                KmsRecipient kmsRecipient = KmsRecipient.deviceCertificate(certSerial,
+                        evidence.certificateDer(), evidence.sha256Fingerprint(), evidence.spki(), null);
+                return new ResolvedRecipient(kmsRecipient, suiteFor(evidence.spki()));
+            }
             CertificateEvidence evidence = resolveDeviceCertificate(c);
             String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
                     ? c.certSerial() : evidence.serial();
@@ -211,6 +239,22 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         throw new CryptoException(CryptoException.Reason.UNSUPPORTED_RECIPIENT,
                 "deriveAndWrap 首期仅支持 DEVICE_CERT_PUBLIC_KEY 收方，got="
                         + recipient.getClass().getSimpleName()) {};
+    }
+
+    /**
+     * 完整 Keyprov 证书能力要求：P-256 + digitalSignature + keyAgreement + clientAuth
+     * 全部成立（FW-SEC-DSN-CR-017 RD-017-4/§9）。统一 Profile 已强制双 KU，此处显式再校验。
+     */
+    private void requireFullProfile(ValidatedTboxDeviceCertificate validated) {
+        if (!validated.p256() || !validated.digitalSignature()
+                || !validated.keyAgreement() || !validated.clientAuth()) {
+            throw new net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateProfileRejectedException(
+                    net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateProfileRejectReason.PROFILE_NOT_ALLOWED,
+                    "TBOX device certificate profile capability incomplete: p256=" + validated.p256()
+                            + ", digitalSignature=" + validated.digitalSignature()
+                            + ", keyAgreement=" + validated.keyAgreement()
+                            + ", clientAuth=" + validated.clientAuth());
+        }
     }
 
     /**

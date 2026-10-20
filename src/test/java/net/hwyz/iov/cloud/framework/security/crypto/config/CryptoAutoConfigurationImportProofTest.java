@@ -47,7 +47,8 @@ class CryptoAutoConfigurationImportProofTest {
 
     private ImportProofVerifier verifier() {
         return configuration.importProofVerifier(certResolver, new TestObjectProvider<>(),
-                properties, cryptoMetrics, readiness(), new TestObjectProvider<>(Clock.systemUTC()));
+                properties, cryptoMetrics, readiness(), new TestObjectProvider<>(Clock.systemUTC()),
+                new TestObjectProvider<>());
     }
 
     @Test

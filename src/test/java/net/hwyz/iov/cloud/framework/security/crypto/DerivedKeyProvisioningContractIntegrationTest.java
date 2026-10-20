@@ -91,7 +91,7 @@ class DerivedKeyProvisioningContractIntegrationTest {
         kmsClient = new FeignKmsClient(properties, kmsFeignClient, cryptoMetrics);
         // 经自动装配 Bean 方法装配：真实 FeignKmsClient + 证书解析组件；DeviceResolver/EvidenceValidator 缺省
         provisioningTemplate = configuration.keyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
-                providerOf(null), providerOf(certResolver), providerOf(null));
+                providerOf(null), providerOf(certResolver), providerOf(null), providerOf(null));
         businessKeyMaterialTemplate = configuration.businessKeyMaterialTemplate(kmsClient, cryptoMetrics,
                 properties, providerOf(certResolver), providerOf(null));
     }
