@@ -24,10 +24,17 @@ import java.util.Date;
 /**
  * 统一 TBOX 设备证书 Profile 测试证书生成器（FW-SEC-DSN-CR-017 §12）。
  * <p>
- * 生成带任意 KU/EKU/CA/关键扩展/身份的叶子证书（运行时生成，有效期相对当前时刻），
- * 供 Profile 校验正负向矩阵使用。
+ * 生成带任意 KU/EKU/CA/关键扩展/身份的叶子证书，供 Profile 校验正负向矩阵使用。
+ * <p>
+ * 有效期相对 {@link #REFERENCE_INSTANT} 固定参考时刻生成（与测试注入的固定 Clock
+ * {@code 2026-10-20T10:00:00Z} 对齐），<strong>不得</strong>使用 {@code REFERENCE_INSTANT}：
+ * 否则证书有效期与真实墙钟耦合，墙钟越过参考时刻 +1h 后所有新证书 notBefore 晚于固定
+ * Clock，统一证据校验将先抛 CERTIFICATE_NOT_YET_VALID 导致全矩阵误挂。
  */
 public final class TboxProfileCertificates {
+
+    /** 固定参考时刻：证书有效期基准（比测试固定 Clock 早 1 小时，保证 at 10:00:00Z 始终有效）。 */
+    private static final Instant REFERENCE_INSTANT = Instant.parse("2026-10-20T09:00:00Z");
 
     public static final X500Name TBOX_SUBJECT = new X500Name("CN=TBOX-00000000000000000000000000000001");
     public static final X500Name NO_CN_SUBJECT = new X500Name("O=OpenIOV");
@@ -49,14 +56,14 @@ public final class TboxProfileCertificates {
     public static Leaf positive() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** P-256 双 KU + clientAuth + CA=true。 */
     public static Leaf caTrue() throws Exception {
         return build(TBOX_SUBJECT, p256(), true, KeyUsage.keyCertSign,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** RSA 2048 双 KU + clientAuth。 */
@@ -66,7 +73,7 @@ public final class TboxProfileCertificates {
         return build(TBOX_SUBJECT, kpg.generateKeyPair(), false,
                 KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** P-384 双 KU + clientAuth。 */
@@ -76,49 +83,49 @@ public final class TboxProfileCertificates {
         return build(TBOX_SUBJECT, kpg.generateKeyPair(), false,
                 KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 仅 digitalSignature。 */
     public static Leaf digitalSignatureOnly() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 仅 keyAgreement。 */
     public static Leaf keyAgreementOnly() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + serverAuth EKU。 */
     public static Leaf serverAuthEku() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_serverAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + anyExtendedKeyUsage。 */
     public static Leaf anyEku() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.anyExtendedKeyUsage, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU、无 EKU。 */
     public static Leaf noEku() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, null, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + clientAuth + KU 非 critical。 */
     public static Leaf kuNonCritical() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 false, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + clientAuth + 额外 keyEncipherment 位。 */
@@ -126,28 +133,28 @@ public final class TboxProfileCertificates {
         return build(TBOX_SUBJECT, p256(), false,
                 KeyUsage.digitalSignature | KeyUsage.keyAgreement | KeyUsage.keyEncipherment,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + clientAuth + subject 无 CN/SAN（身份绑定不足）。 */
     public static Leaf noIdentity() throws Exception {
         return build(NO_CN_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + clientAuth + 未知关键扩展。 */
     public static Leaf unknownCriticalExtension() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, true,
-                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(3600), REFERENCE_INSTANT.plusSeconds(24 * 3600));
     }
 
     /** 双 KU + clientAuth + 自定义有效期（过期测试）。 */
     public static Leaf expired() throws Exception {
         return build(TBOX_SUBJECT, p256(), false, KeyUsage.digitalSignature | KeyUsage.keyAgreement,
                 true, KeyPurposeId.id_kp_clientAuth, false,
-                Instant.now().minusSeconds(48 * 3600), Instant.now().minusSeconds(24 * 3600));
+                REFERENCE_INSTANT.minusSeconds(48 * 3600), REFERENCE_INSTANT.minusSeconds(24 * 3600));
     }
 
     private static KeyPair p256() throws Exception {
