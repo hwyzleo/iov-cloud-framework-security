@@ -8,6 +8,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaProfileRout
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -104,8 +105,12 @@ public final class StepCaJwkSignerRegistryFactory {
                 log.warn("step-ca signer '{}' 使用内联 JWK 内容（配置中心下发）；生产优先 file/Secret Provider "
                         + "（FW-SEC-DSN-CR-018 §5.2）", signerRef);
             }
+            // §5.2：content 来源同样支持 password-file（与 file 来源一致，否则会被静默忽略）
+            String contentPassword = hasPassword
+                    ? password
+                    : (hasPasswordFile ? readPasswordFile(signerRef, passwordFile) : null);
             try {
-                handle = JwkPrivateKeyHandle.fromContent(privateKeyContent.trim(), password);
+                handle = JwkPrivateKeyHandle.fromContent(privateKeyContent.trim(), contentPassword);
             } catch (IllegalStateException e) {
                 throw new IllegalStateException(
                         "step-ca signer '" + signerRef + "' JWK load failed: " + e.getMessage(), e);
@@ -185,6 +190,23 @@ public final class StepCaJwkSignerRegistryFactory {
 
     private static boolean hasAnyKeySource(CryptoProperties.Pki.Jwk jwk) {
         return notBlank(jwk.getPrivateKeyFile()) || notBlank(jwk.getPrivateKeyContent());
+    }
+
+    /**
+     * 读取解密口令文件（内联 content 来源也支持 password-file，与 file 来源保持一致）。
+     */
+    private static String readPasswordFile(String signerRef, String passwordFile) {
+        Path passwordPath = Path.of(passwordFile);
+        if (!Files.isReadable(passwordPath)) {
+            throw new IllegalStateException(
+                    "step-ca signer '" + signerRef + "' password file is not readable: " + passwordPath);
+        }
+        try {
+            return Files.readString(passwordPath, StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "step-ca signer '" + signerRef + "' failed to read password file: " + passwordPath, e);
+        }
     }
 
     private static boolean notBlank(String value) {
