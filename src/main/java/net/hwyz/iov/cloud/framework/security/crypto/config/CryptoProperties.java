@@ -965,6 +965,117 @@ public class CryptoProperties {
              */
             private String password;
 
+            /**
+             * 命名 JWK signer 映射（FW-SEC-DSN-CR-018 §5.1）。
+             * <p>
+             * map key 为稳定、非敏感的 {@code signerRef}（RD-018-2，不得使用保留名
+             * {@code __legacy__}）。各 signer 可独立持钥，多个 Profile 可显式共享同一 signer。
+             * legacy 单 JWK 字段（private-key-file/password-file/private-key-content/password）
+             * 保留兼容：未声明 {@code jwk-signer-ref} 的 Profile 走 legacy route（RD-018-4）。
+             */
+            private Map<String, JwkSignerProperties> signers = new java.util.LinkedHashMap<>();
+
+            public String getPrivateKeyFile() {
+                return privateKeyFile;
+            }
+
+            public void setPrivateKeyFile(String privateKeyFile) {
+                this.privateKeyFile = privateKeyFile;
+            }
+
+            public String getPasswordFile() {
+                return passwordFile;
+            }
+
+            public void setPasswordFile(String passwordFile) {
+                this.passwordFile = passwordFile;
+            }
+
+            public String getPrivateKeyContent() {
+                return privateKeyContent;
+            }
+
+            public void setPrivateKeyContent(String privateKeyContent) {
+                this.privateKeyContent = privateKeyContent;
+            }
+
+            public String getPassword() {
+                return password;
+            }
+
+            public void setPassword(String password) {
+                this.password = password;
+            }
+
+            public Map<String, JwkSignerProperties> getSigners() {
+                return signers;
+            }
+
+            public void setSigners(Map<String, JwkSignerProperties> signers) {
+                this.signers = signers == null ? new java.util.LinkedHashMap<>() : signers;
+            }
+
+            /**
+             * 是否配置了内联 JWK 内容。
+             */
+            public boolean hasInlineContent() {
+                return privateKeyContent != null && !privateKeyContent.isBlank();
+            }
+        }
+
+        /**
+         * 命名 JWK signer 私钥来源配置（FW-SEC-DSN-CR-018 §5.2）。
+         * <p>
+         * 私有密钥来源规则与 legacy {@link Jwk} 一致：file/content 二选一，password/password-file 二选一；
+         * 生产优先只读 Secret 文件，正文 Secret 仅保留兼容能力并产生安全告警。
+         */
+        public static class JwkSignerProperties {
+            /**
+             * signer 绑定的 step-ca provisioner 名（与引用它的 Profile route 必须一致，RD-018-5）。
+             */
+            private String provisioner;
+
+            /**
+             * signer 绑定的 provisioner JWK kid（与引用它的 Profile route 必须一致，RD-018-5）。
+             */
+            private String kid;
+
+            /**
+             * 只读私钥文件路径（明文 JWK 或 step-ca 口令加密 JWK）。
+             */
+            private String privateKeyFile;
+
+            /**
+             * 解密口令文件路径（仅加密 JWK 需要；独立 Secret 注入）。
+             */
+            private String passwordFile;
+
+            /**
+             * 内联 JWK 内容（明文 JWK 或 step-ca 口令加密 JWK 的 JSON），适合配置中心/Nacos 下发。
+             */
+            private String privateKeyContent;
+
+            /**
+             * 解密口令（仅加密 JWK 需要）。
+             */
+            private String password;
+
+            public String getProvisioner() {
+                return provisioner;
+            }
+
+            public void setProvisioner(String provisioner) {
+                this.provisioner = provisioner;
+            }
+
+            public String getKid() {
+                return kid;
+            }
+
+            public void setKid(String kid) {
+                this.kid = kid;
+            }
+
             public String getPrivateKeyFile() {
                 return privateKeyFile;
             }
@@ -1020,6 +1131,12 @@ public class CryptoProperties {
             private String kid;
 
             /**
+             * 命名 JWK signer 引用（FW-SEC-DSN-CR-018 §5.1；未声明时走 legacy route，RD-018-4）。
+             * 显式引用时 provisioner/kid 必须与 signer 属性一致（RD-018-5）。
+             */
+            private String jwkSignerRef;
+
+            /**
              * 最大签发有效期
              */
             private Duration maxValidity;
@@ -1053,6 +1170,14 @@ public class CryptoProperties {
 
             public void setKid(String kid) {
                 this.kid = kid;
+            }
+
+            public String getJwkSignerRef() {
+                return jwkSignerRef;
+            }
+
+            public void setJwkSignerRef(String jwkSignerRef) {
+                this.jwkSignerRef = jwkSignerRef;
             }
 
             public Duration getMaxValidity() {

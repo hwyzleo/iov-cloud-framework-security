@@ -15,6 +15,8 @@ import java.util.Objects;
  * @param profileName           framework profile 名（registry 键）
  * @param provisioner           step-ca provisioner 名
  * @param kid                   provisioner JWK 的 kid
+ * @param jwkSignerRef          命名 JWK signer 引用（FW-SEC-DSN-CR-018 §5/§7；未声明时走 legacy
+ *                              route，RD-018-4）
  * @param maxValidity           最大签发有效期（null 表示不限制，受 step-ca 模板约束）
  * @param allowedKeyAlgorithms  允许的密钥算法（如 EC_P256）
  * @param requiredEku           要求的扩展密钥用法（如 CLIENT_AUTH）
@@ -24,6 +26,7 @@ public record StepCaProfilePolicy(
         String profileName,
         String provisioner,
         String kid,
+        String jwkSignerRef,
         Duration maxValidity,
         List<String> allowedKeyAlgorithms,
         List<String> requiredEku,

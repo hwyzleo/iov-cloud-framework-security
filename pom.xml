@@ -17,6 +17,8 @@
 
     <properties>
         <edd-mpt-version>0.0.1-SNAPSHOT</edd-mpt-version>
+        <!-- 契约测试组（依赖 Docker），默认排除；执行契约测试时用 -Dsurefire.excludedGroups= 清空 -->
+        <surefire.excludedGroups>contract</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -144,9 +146,9 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <skip>false</skip>
-                    <!-- 契约测试依赖 Docker（step-ca/Redis 容器），CI 默认阶段排除，
-                         需要验证时用 -Dgroups=contract 显式执行（需 agent 具备可用 Docker） -->
-                    <excludedGroups>contract</excludedGroups>
+                    <!-- 契约测试依赖 Docker（step-ca/Redis 容器），默认阶段排除；
+                         需要验证时执行：mvn test -Dgroups=contract -Dsurefire.excludedGroups= -->
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

@@ -12,6 +12,8 @@ import java.util.Objects;
  * @param requestId    enrollment requestId（并入 jti，保证一次性）
  * @param provisioner  provisioner 名
  * @param kid          provisioner JWK 的 kid
+ * @param signerRef    选中的命名 signer 引用（只由内部 effective route 产生，不进入业务 API，
+ *                     FW-SEC-DSN-CR-018 §7）
  * @param audience     令牌 audience（精确 sign URL）
  * @param subject      证书主体
  * @param sans         允许的 SAN 列表（约束 SAN 不越权）
@@ -23,6 +25,7 @@ public record StepCaTokenRequest(
         String requestId,
         String provisioner,
         String kid,
+        String signerRef,
         URI audience,
         String subject,
         List<String> sans,

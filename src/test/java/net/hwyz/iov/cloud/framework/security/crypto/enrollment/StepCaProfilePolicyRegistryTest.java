@@ -18,7 +18,7 @@ class StepCaProfilePolicyRegistryTest {
     void resolve_shouldReturnPolicy_forRegisteredProfile() {
         StepCaProfilePolicyRegistry registry = new StepCaProfilePolicyRegistry(Map.of(
                 "TBOX_IDENTITY", new StepCaProfilePolicy(
-                        "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
+                        "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofDays(365),
                         List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX")));
 
         StepCaProfilePolicy policy = registry.resolve("TBOX_IDENTITY");
@@ -35,7 +35,7 @@ class StepCaProfilePolicyRegistryTest {
     void resolve_shouldRejectUnknownProfile() {
         StepCaProfilePolicyRegistry registry = new StepCaProfilePolicyRegistry(Map.of(
                 "TBOX_IDENTITY", new StepCaProfilePolicy(
-                        "TBOX_IDENTITY", "openiov", "kid-1", null,
+                        "TBOX_IDENTITY", "openiov", "kid-1", null, null,
                         List.of(), List.of(), "TBOX")));
 
         assertThrows(CertificateProfileNotAllowedException.class, () -> registry.resolve("UNKNOWN_PROFILE"));

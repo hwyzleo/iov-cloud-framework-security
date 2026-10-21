@@ -21,6 +21,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.ImportProofVerificationHealthIndicator;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyprovCertificateProfileHealthIndicator;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyprovReadiness;
+import net.hwyz.iov.cloud.framework.security.crypto.KeyprovStartupReadinessVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
@@ -45,12 +46,14 @@ import net.hwyz.iov.cloud.framework.security.crypto.enrollment.CertificateEnroll
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.EnrollmentIdempotencyService;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.HttpStepCaApiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.InMemoryCertificateEnrollmentResultStore;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.JwkSignerRegistry;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.JwkStepCaTokenProvider;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.RedisCertificateEnrollmentResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaApiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaPkiClient;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaProfilePolicy;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaProfilePolicyRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaProfileRouteResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.StepCaTokenProvider;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.CertificateProfile;
@@ -79,8 +82,6 @@ import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -241,11 +242,13 @@ public class CryptoAutoConfiguration {
     }
 
     /**
-     * 统一 TBOX 设备证书 Profile 验证器（FW-SEC-DSN-CR-017 §4/§7/§8）。
+     * 统一 TBOX 设备证书 Profile 验证器（FW-SEC-DSN-CR-017 §4/§7/§8；FW-SEC-DSN-CR-018 §9.1）。
      * <p>
      * 受 {@code crypto.keyprov.certificate-profile.enabled} 控制，与 provisioning/import-proof
      * 独立装配（决策 3）。装配时供 deriveAndWrap 与 ImportProofVerifier 经 ObjectProvider 消费；
-     * {@code require-ready-at-startup=true} 且 Profile readiness 未就绪时启动 fail-closed。
+     * 工厂方法<strong>纯构造</strong>，不再调用 readiness（RD-018-6）：启动强校验由独立
+     * {@link KeyprovStartupReadinessVerifier} 在普通 singleton 创建完成后执行，消除
+     * validator↔readiness 创建期循环依赖。
      */
     @Bean
     @ConditionalOnMissingBean
@@ -254,20 +257,33 @@ public class CryptoAutoConfiguration {
             ObjectProvider<CertResolver> certResolverProvider,
             ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider,
             CryptoProperties properties,
-            ObjectProvider<Clock> clockProvider,
-            ObjectProvider<KeyprovReadiness> keyprovReadinessProvider) {
-        KeyprovReadiness readiness = keyprovReadinessProvider.getIfAvailable();
-        if (properties.getKeyprov().getCertificateProfile().isRequireReadyAtStartup()) {
-            if (readiness == null) {
-                throw new IllegalStateException(
-                        "crypto.keyprov.certificate-profile.require-ready-at-startup=true requires "
-                                + "KeyprovReadiness bean (FW-SEC-DSN-CR-017 §9)");
-            }
-            readiness.verifyAtStartup();
-        }
+            ObjectProvider<Clock> clockProvider) {
         log.info("统一 TBOX 设备证书 Profile 验证器装配完成: profile=TBOX_DEVICE_ECDH_ES_P256_V1");
         return new DefaultTboxDeviceCertificateValidator(certResolverProvider.getIfAvailable(),
                 evidenceValidatorProvider.getIfAvailable(), properties, clockProvider.getIfAvailable());
+    }
+
+    /**
+     * Keyprov 启动就绪强校验器（FW-SEC-DSN-CR-018 §9.2）。
+     * <p>
+     * 使用 {@link org.springframework.beans.factory.SmartInitializingSingleton}：回调发生在普通
+     * singleton 创建完成后、应用 READY 之前；失败抛异常终止启动。readiness 可运行时延迟取得 validator，
+     * validator 永不反向依赖 readiness（RD-018-6/7）。不启用 Spring 循环引用兼容开关。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.keyprov.certificate-profile", name = "enabled", havingValue = "true")
+    public KeyprovStartupReadinessVerifier keyprovStartupReadinessVerifier(
+            ObjectProvider<KeyprovReadiness> readinessProvider,
+            CryptoProperties properties) {
+        KeyprovReadiness readiness = readinessProvider.getIfAvailable();
+        if (readiness == null) {
+            throw new IllegalStateException(
+                    "KeyprovReadiness bean is not wired; cannot perform startup readiness verification"
+                            + " (FW-SEC-DSN-CR-018 §9.2)");
+        }
+        return new KeyprovStartupReadinessVerifier(readiness,
+                properties.getKeyprov().getCertificateProfile().isRequireReadyAtStartup());
     }
 
     /**
@@ -463,7 +479,7 @@ public class CryptoAutoConfiguration {
         CryptoProperties.Pki pki = properties.getPki();
         CryptoProperties.Pki.StepCa stepCa = pki.getStepCa();
 
-        // 启动校验
+        // 启动校验（fail-fast：全部配置校验在网络调用之前完成）
         URI endpoint = URI.create(pki.getEndpoint());
         if (!"https".equalsIgnoreCase(endpoint.getScheme())) {
             throw new IllegalStateException(
@@ -479,26 +495,33 @@ public class CryptoAutoConfiguration {
                             + "in-memory store is only for dev/test (FW-SEC-DSN-CR-008 §5.1)");
         }
 
+        // FW-SEC-DSN-CR-018 §6/§8：启动构建不可变 signer registry（加载/解密 JWK、校验来源与算法），
+        // 每个启用 Profile 必须可解析到且仅解析到一个 signer（§8.2），fail-closed（网络调用前）。
+        JwkSignerRegistry signerRegistry = StepCaJwkSignerRegistryFactory.create(stepCa);
+        StepCaProfilePolicyRegistry registry = stepCaProfilePolicyRegistry(stepCa);
+        for (String profileName : registry.profileNames()) {
+            StepCaProfileRouteResolver.resolve(registry.resolve(profileName), signerRegistry);
+        }
+
         // step-ca API 客户端（启动即建立根指纹固定信任锚）
         StepCaApiClient apiClient = new HttpStepCaApiClient(
                 endpoint, stepCa.getRootSha256(),
                 pki.getConnectTimeout(), pki.getReadTimeout(),
                 pki.getRetry().getMaxAttempts(), pki.getRetry().getBaseBackoff());
 
-        StepCaTokenProvider tokenProvider = stepCaTokenProvider(stepCa);
-        StepCaProfilePolicyRegistry registry = stepCaProfilePolicyRegistry(stepCa);
+        StepCaTokenProvider tokenProvider = new JwkStepCaTokenProvider(signerRegistry, stepCa.getTokenTtl());
 
         PkiClient client = new StepCaPkiClient(
-                apiClient, tokenProvider, registry, resultStore, chainValidator,
+                apiClient, tokenProvider, signerRegistry, registry, resultStore, chainValidator,
                 idempotencyService, cryptoMetrics, endpoint, stepCa.getRootSha256(),
                 certificateStatusCheckerProvider.getIfAvailable());
 
         log.info("step-ca 证书注册装配完成: provider=step-ca, endpoint={}, rootFingerprint=...{}, "
-                        + "resultStore={}, profiles={}",
+                        + "resultStore={}, profiles={}, signers={}",
                 endpoint.getHost(),
                 stepCa.getRootSha256().replace(":", "").substring(
                         Math.max(0, stepCa.getRootSha256().replace(":", "").length() - 8)),
-                resultStore.getClass().getSimpleName(), registry.profileNames());
+                resultStore.getClass().getSimpleName(), registry.profileNames(), signerRegistry.signerRefs());
         return client;
     }
 
@@ -636,45 +659,13 @@ public class CryptoAutoConfiguration {
 
     // ==================== 内部工具 ====================
 
-    private static StepCaTokenProvider stepCaTokenProvider(CryptoProperties.Pki.StepCa stepCa) {
-        if (!"jwk".equalsIgnoreCase(stepCa.getTokenProvider())) {
-            throw new IllegalStateException("Unsupported step-ca token-provider: " + stepCa.getTokenProvider()
-                    + " (only 'jwk' is currently supported)");
-        }
-        CryptoProperties.Pki.Jwk jwk = stepCa.getJwk();
-
-        // 优先内联内容（适合配置中心/Nacos 下发；口令建议用环境变量占位符注入）
-        if (jwk.hasInlineContent()) {
-            log.info("step-ca JWK provisioner 使用内联内容装配（配置中心下发）");
-            return new JwkStepCaTokenProvider(jwk.getPrivateKeyContent(), jwk.getPassword(), stepCa.getTokenTtl());
-        }
-
-        // 回退到只读 Secret 文件
-        if (jwk.getPrivateKeyFile() == null || jwk.getPrivateKeyFile().isBlank()) {
-            throw new IllegalStateException(
-                    "step-ca JWK provisioner requires either crypto.pki.step-ca.jwk.private-key-content "
-                            + "or private-key-file");
-        }
-        Path privateKeyFile = Path.of(jwk.getPrivateKeyFile());
-        if (!Files.isReadable(privateKeyFile)) {
-            throw new IllegalStateException(
-                    "step-ca JWK private key file is not readable: " + privateKeyFile
-                            + " (must be mounted read-only Secret)");
-        }
-        Path passwordFile = jwk.getPasswordFile() != null
-                ? Path.of(jwk.getPasswordFile()) : null;
-        if (passwordFile != null && !Files.isReadable(passwordFile)) {
-            throw new IllegalStateException("step-ca JWK password file is not readable: " + passwordFile);
-        }
-        return new JwkStepCaTokenProvider(privateKeyFile, passwordFile, stepCa.getTokenTtl());
-    }
-
     private static StepCaProfilePolicyRegistry stepCaProfilePolicyRegistry(CryptoProperties.Pki.StepCa stepCa) {
         Map<String, StepCaProfilePolicy> policies = new LinkedHashMap<>();
         stepCa.getProfiles().forEach((name, p) -> policies.put(name, new StepCaProfilePolicy(
                 name,
                 p.getProvisioner(),
                 p.getKid(),
+                p.getJwkSignerRef(),
                 p.getMaxValidity(),
                 p.getAllowedKeyAlgorithms(),
                 p.getRequiredEku(),

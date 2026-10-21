@@ -25,7 +25,7 @@ class CertificateChainValidatorTest {
         material = TestPkiMaterial.generate(true, "TBOX-00000000000000000000000000000001");
         rootFingerprint = EnrollmentRecord.fingerprintHex(material.rootCert().getEncoded());
         policy = new StepCaProfilePolicy(
-                "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
+                "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofDays(365),
                 List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX");
     }
 
@@ -141,7 +141,7 @@ class CertificateChainValidatorTest {
     void validateIssued_shouldFail_whenValidityExceedsMax() throws Exception {
         // maxValidity 极小（1 分钟），必定超限
         StepCaProfilePolicy tinyPolicy = new StepCaProfilePolicy(
-                "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofMinutes(1),
+                "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofMinutes(1),
                 List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX");
         List<byte[]> chain = List.of(
                 material.intermediateCert().getEncoded(),
@@ -157,7 +157,7 @@ class CertificateChainValidatorTest {
     @Test
     void validateIssued_shouldFail_whenSubjectRuleViolated() throws Exception {
         StepCaProfilePolicy otherRule = new StepCaProfilePolicy(
-                "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
+                "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofDays(365),
                 List.of("EC_P256"), List.of("CLIENT_AUTH"), "VIN");
         List<byte[]> chain = List.of(
                 material.intermediateCert().getEncoded(),
@@ -176,7 +176,7 @@ class CertificateChainValidatorTest {
         TestPkiMaterial.Pki uriMaterial = TestPkiMaterial.generateWithUriSan(
                 "urn:ecu-uid:00000000000000000000000000000001");
         StepCaProfilePolicy urnRule = new StepCaProfilePolicy(
-                "TBOX_TSP_CLIENT", "openiov", "kid-1", Duration.ofDays(365),
+                "TBOX_TSP_CLIENT", "openiov", "kid-1", null, Duration.ofDays(365),
                 List.of("EC_P256"), List.of("CLIENT_AUTH"), "urn:ecu-uid:");
         List<byte[]> chain = List.of(
                 uriMaterial.intermediateCert().getEncoded(),
@@ -194,7 +194,7 @@ class CertificateChainValidatorTest {
         TestPkiMaterial.Pki uriMaterial = TestPkiMaterial.generateWithUriSan(
                 "urn:vin:LVGBE40K0PA000001");
         StepCaProfilePolicy urnRule = new StepCaProfilePolicy(
-                "TBOX_TSP_CLIENT", "openiov", "kid-1", Duration.ofDays(365),
+                "TBOX_TSP_CLIENT", "openiov", "kid-1", null, Duration.ofDays(365),
                 List.of("EC_P256"), List.of("CLIENT_AUTH"), "urn:ecu-uid:");
         List<byte[]> chain = List.of(
                 uriMaterial.intermediateCert().getEncoded(),
@@ -211,7 +211,7 @@ class CertificateChainValidatorTest {
     @Test
     void validateIssued_shouldFail_whenKeyAlgorithmNotAllowed() throws Exception {
         StepCaProfilePolicy rsaOnly = new StepCaProfilePolicy(
-                "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
+                "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofDays(365),
                 List.of("RSA_2048"), List.of("CLIENT_AUTH"), "TBOX");
         List<byte[]> chain = List.of(
                 material.intermediateCert().getEncoded(),

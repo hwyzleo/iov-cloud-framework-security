@@ -7,6 +7,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.PkiDependencyUnava
 import net.hwyz.iov.cloud.framework.security.crypto.exception.PkiOutcomeUnknownException;
 import net.hwyz.iov.cloud.framework.security.crypto.metrics.CryptoMetrics;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EnrollmentState;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.jwk.Curve;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -47,13 +51,19 @@ class StepCaPkiClientTest {
         store = new InMemoryCertificateEnrollmentResultStore(Duration.ofMinutes(30), 100);
         registry = new StepCaProfilePolicyRegistry(Map.of(
                 "TBOX_IDENTITY", new StepCaProfilePolicy(
-                        "TBOX_IDENTITY", "openiov", "kid-1", Duration.ofDays(365),
+                        "TBOX_IDENTITY", "openiov", "kid-1", null, Duration.ofDays(365),
                         List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX")));
+        JwkSignerRegistry signerRegistry = new DefaultJwkSignerRegistry(Map.of(
+                StepCaProfileRouteResolver.LEGACY_SIGNER_REF, new JwkSignerDescriptor(
+                        StepCaProfileRouteResolver.LEGACY_SIGNER_REF, null, null,
+                        JwkPrivateKeyHandle.fromContent(
+                                new ECKeyGenerator(Curve.P_256).keyID("kid-1")
+                                        .algorithm(JWSAlgorithm.ES256).generate().toJSONString(), null))));
         EnrollmentIdempotencyService idempotency = new EnrollmentIdempotencyService(store);
 
-        client = new StepCaPkiClient(apiClient, tokenProvider, registry, store,
+        client = new StepCaPkiClient(apiClient, tokenProvider, signerRegistry, registry, store,
                 new CertificateChainValidator(), idempotency, metrics,
-                URI.create("https://step-ca:9000"), rootFingerprint);
+                URI.create("https://step-ca:9000"), rootFingerprint, null);
 
         when(tokenProvider.createToken(any())).thenReturn("mock-ott");
         when(apiClient.sign(any())).thenReturn(new StepCaApiClient.StepCaSignResponse(
@@ -121,12 +131,64 @@ class StepCaPkiClientTest {
             assertEquals("req-1", request.requestId());
             assertEquals("openiov", request.provisioner());
             assertEquals("kid-1", request.kid());
+            assertEquals(StepCaProfileRouteResolver.LEGACY_SIGNER_REF, request.signerRef(),
+                    "未声明 jwk-signer-ref 的 Profile 走 legacy route（RD-018-4）");
             assertEquals(URI.create("https://step-ca:9000/1.0/sign"), request.audience());
             assertEquals("TBOX-00000000000000000000000000000001", request.subject());
             assertEquals(List.of("TBOX-00000000000000000000000000000001"), request.sans());
             assertEquals(rootFingerprint, request.rootSha256());
             return true;
         }));
+    }
+
+    @Test
+    void submit_shouldResolveExplicitSignerRefRoute() throws Exception {
+        // Profile 显式引用命名 signer：有效路由采用 signer 的 provisioner/kid（RD-018-5 校验一致后）
+        JwkSignerRegistry explicitRegistry = new DefaultJwkSignerRegistry(Map.of(
+                "tsp-client", new JwkSignerDescriptor("tsp-client", "openiov", "kid-1",
+                        JwkPrivateKeyHandle.fromContent(
+                                new ECKeyGenerator(Curve.P_256).keyID("kid-1")
+                                        .algorithm(JWSAlgorithm.ES256).generate().toJSONString(), null))));
+        StepCaProfilePolicyRegistry explicitPolicies = new StepCaProfilePolicyRegistry(Map.of(
+                "TBOX_IDENTITY", new StepCaProfilePolicy(
+                        "TBOX_IDENTITY", "openiov", "kid-1", "tsp-client", Duration.ofDays(365),
+                        List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX")));
+        StepCaPkiClient explicitClient = new StepCaPkiClient(apiClient, tokenProvider, explicitRegistry,
+                explicitPolicies, store, new CertificateChainValidator(),
+                new EnrollmentIdempotencyService(store), metrics,
+                URI.create("https://step-ca:9000"), rootFingerprint, null);
+
+        explicitClient.submit(command("req-sig", "idem-sig"));
+
+        verify(tokenProvider).createToken(argThat(request -> {
+            assertEquals("tsp-client", request.signerRef(), "显式 jwk-signer-ref 生效");
+            assertEquals("openiov", request.provisioner());
+            assertEquals("kid-1", request.kid());
+            return true;
+        }));
+    }
+
+    @Test
+    void submit_shouldFailClosed_beforeHttp_whenSignerRouteMismatch() throws Exception {
+        // Profile kid 与 signer kid 冲突：不得覆盖（RD-018-5），step-ca 调用次数为 0
+        JwkSignerRegistry mismatchedRegistry = new DefaultJwkSignerRegistry(Map.of(
+                "tsp-client", new JwkSignerDescriptor("tsp-client", "openiov", "other-kid",
+                        JwkPrivateKeyHandle.fromContent(
+                                new ECKeyGenerator(Curve.P_256).keyID("other-kid")
+                                        .algorithm(JWSAlgorithm.ES256).generate().toJSONString(), null))));
+        StepCaProfilePolicyRegistry mismatchedPolicies = new StepCaProfilePolicyRegistry(Map.of(
+                "TBOX_IDENTITY", new StepCaProfilePolicy(
+                        "TBOX_IDENTITY", "openiov", "kid-1", "tsp-client", Duration.ofDays(365),
+                        List.of("EC_P256"), List.of("CLIENT_AUTH"), "TBOX")));
+        StepCaPkiClient mismatchedClient = new StepCaPkiClient(apiClient, tokenProvider, mismatchedRegistry,
+                mismatchedPolicies, store, new CertificateChainValidator(),
+                new EnrollmentIdempotencyService(store), metrics,
+                URI.create("https://step-ca:9000"), rootFingerprint, null);
+
+        assertThrows(IllegalStateException.class,
+                () -> mismatchedClient.submit(command("req-mm", "idem-mm")));
+        verify(apiClient, never()).sign(any());
+        verify(tokenProvider, never()).createToken(any());
     }
 
     @Test

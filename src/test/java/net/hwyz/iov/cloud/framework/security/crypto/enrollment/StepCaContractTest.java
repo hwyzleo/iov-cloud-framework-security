@@ -101,7 +101,11 @@ class StepCaContractTest {
         Files.writeString(passwordFile, PROVISIONER_PASSWORD, StandardCharsets.UTF_8);
 
         // 3) 构建 framework 适配组件
-        tokenProvider = new JwkStepCaTokenProvider(keyFile, passwordFile, Duration.ofMinutes(5));
+        JwkPrivateKeyHandle legacyHandle = JwkPrivateKeyHandle.fromFile(keyFile, passwordFile);
+        tokenProvider = new JwkStepCaTokenProvider(new DefaultJwkSignerRegistry(Map.of(
+                StepCaProfileRouteResolver.LEGACY_SIGNER_REF, new JwkSignerDescriptor(
+                        StepCaProfileRouteResolver.LEGACY_SIGNER_REF, null, null, legacyHandle))),
+                Duration.ofMinutes(5));
         apiClient = new HttpStepCaApiClient(endpoint, rootFingerprint,
                 Duration.ofSeconds(3), Duration.ofSeconds(5), 2, Duration.ofMillis(100));
         chainValidator = new CertificateChainValidator();
@@ -140,14 +144,21 @@ class StepCaContractTest {
     private static StepCaProfilePolicyRegistry registry() {
         return new StepCaProfilePolicyRegistry(Map.of(
                 "TBOX_IDENTITY", new StepCaProfilePolicy(
-                        "TBOX_IDENTITY", PROVISIONER, kid, Duration.ofHours(1),
+                        "TBOX_IDENTITY", PROVISIONER, kid, null, Duration.ofHours(1),
                         List.of("EC_P256"), List.of(), "TBOX")));
     }
 
     private static StepCaPkiClient newClient(InMemoryCertificateEnrollmentResultStore store) {
-        return new StepCaPkiClient(apiClient, tokenProvider, registry(), store,
+        return new StepCaPkiClient(apiClient, tokenProvider,
+                new DefaultJwkSignerRegistry(Map.of(
+                        StepCaProfileRouteResolver.LEGACY_SIGNER_REF, new JwkSignerDescriptor(
+                                StepCaProfileRouteResolver.LEGACY_SIGNER_REF, null, null,
+                                JwkPrivateKeyHandle.fromFile(
+                                        tempDir.resolve("provisioner.jwk"),
+                                        tempDir.resolve("provisioner.password"))))),
+                registry(), store,
                 chainValidator, new EnrollmentIdempotencyService(store), metrics,
-                endpoint, rootFingerprint);
+                endpoint, rootFingerprint, null);
     }
 
     @Test

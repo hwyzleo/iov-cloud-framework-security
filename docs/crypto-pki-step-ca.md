@@ -24,15 +24,45 @@ crypto:
       jwk:
         private-key-file: /run/secrets/openiov-provisioner.jwk   # 只读 Secret（明文 JWK 或含 encryptedKey 的 step-ca JWK）
         password-file: /run/secrets/openiov-provisioner-password # 仅加密 JWK 需要，独立 Secret
+        # 命名 signer（FW-SEC-DSN-CR-018）：多 Provisioner 路由。map key 为稳定非敏感 signerRef，
+        # 保留名 __legacy__ 不可用作 key；file/content 二选一，password/password-file 二选一。
+        signers:
+          tsp-client:
+            provisioner: openiov
+            kid: ${STEP_CA_OPENIOV_KID}
+            private-key-file: /run/secrets/openiov-provisioner.jwk
+            password-file: /run/secrets/openiov-provisioner-password
       profiles:
         TBOX_TSP_CLIENT:                    # 键 = framework 治理的 CertificateProfile.name
           provisioner: openiov              # step-ca provisioner
           kid: ${STEP_CA_OPENIOV_KID}       # provisioner JWK 的 kid
+          jwk-signer-ref: tsp-client        # 命名 signer 引用（FW-SEC-DSN-CR-018；未声明时走 legacy）
           max-validity: 365d                # 最大签发有效期（不得超 step-ca 模板上限）
           allowed-key-algorithms: [EC_P256]
           required-eku: [CLIENT_AUTH]
           subject-rule: TBOX                # subject/SAN 前缀约束（防越权）
 ```
+
+### 多 JWK signer 路由（FW-SEC-DSN-CR-018）
+
+- **两级路由**：逻辑 Profile → `StepCaProfilePolicy` 授权 → 选中唯一命名 signer（`jwk-signer-ref`）→
+  用该 signer 私钥签发 OTT。调用请求不能直接选择 signer；`signerRef` 只由内部路由产生，不进入业务 API。
+- **legacy 兼容**：未声明 `jwk-signer-ref` 的 Profile 自动回退到保留引用 `__legacy__`（使用
+  `crypto.pki.step-ca.jwk` 顶层 legacy 单 JWK）；legacy 不存在时启动失败。`__legacy__` 是内部保留名，
+  不得用作 signers map key。
+- **路由一致性**：Profile 显式引用 signer 时，Profile 与 signer 的 `provisioner`/`kid` 必须一致，
+  冲突不得以任一方覆盖（启动 fail-closed，禁止静默降级）。
+- **配置校验（启动期 fail-closed）**：signerRef 格式/唯一性/保留名；每个启用 Profile 必须解析到唯一 signer；
+  私钥/口令来源不冲突（file/content、password/password-file 各二选一）；JWK 必须是可签名私钥；
+  配置 kid 与 JWK 自身 kid 一致；未使用 signer 告警但不被自动选中。
+- **多 Provisioner 示例**（TSP 与 TBOX 设备 ECDH 各自独立 key/kid）：
+  `signers.tsp-client`（provisioner=openiov）与 `signers.tbox-device-ecdh-v1`（provisioner=tbox-device-ecdh-v1）
+  各自持钥；对应 Profile 分别引用；签名时 `JWS header.kid = 有效路由 kid`。
+
+> **迁移**：阶段 A 零改动升级（legacy + 现有 Profile 不变，全走 `__legacy__`）；阶段 B 把存量 TSP JWK
+> 移入 `signers.tsp-client` 并给存量 Profile 增 `jwk-signer-ref`（灰度期 legacy 与显式 signer 内容必须一致）；
+> 阶段 C 登记 ECDH signer 并让新 Profile 引用（需 PKI 侧建好对应 Provisioner/独立 JWK/模板）；
+> 阶段 D 待全部 Profile 有显式 signerRef 后清理 legacy 字段（另立兼容清理 CR，本 CR 不删除 legacy 支持）。
 
 - `root-sha256` 获取：`step certificate fingerprint <root_ca.crt>`（大小写不敏感，可含/不含冒号）。
 - JWK 私钥**严禁**写入 `application.yml` / Nacos；只允许只读 Secret 文件挂载（明文 JWK 或 step-ca 发布的

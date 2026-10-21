@@ -3,6 +3,7 @@ package net.hwyz.iov.cloud.framework.security.crypto.config;
 import net.hwyz.iov.cloud.framework.security.crypto.DefaultTboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyprovCertificateProfileHealthIndicator;
 import net.hwyz.iov.cloud.framework.security.crypto.KeyprovReadiness;
+import net.hwyz.iov.cloud.framework.security.crypto.KeyprovStartupReadinessVerifier;
 import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.TestObjectProvider;
@@ -12,6 +13,7 @@ import org.springframework.core.env.Environment;
 
 import java.time.Clock;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -55,8 +57,12 @@ class CryptoAutoConfigurationKeyprovProfileTest {
         return configuration.tboxDeviceCertificateValidator(
                 new TestObjectProvider<>(certResolver),
                 new TestObjectProvider<>(),
-                properties, new TestObjectProvider<>(Clock.systemUTC()),
-                new TestObjectProvider<>(readiness()));
+                properties, new TestObjectProvider<>(Clock.systemUTC()));
+    }
+
+    private KeyprovStartupReadinessVerifier startupVerifier() {
+        return configuration.keyprovStartupReadinessVerifier(
+                new TestObjectProvider<>(readiness()), properties);
     }
 
     @Test
@@ -84,12 +90,46 @@ class CryptoAutoConfigurationKeyprovProfileTest {
     }
 
     @Test
-    void validator_startupGateFailsClosedWhenNotReady() {
+    void validator_assemblesWithoutReadinessDependency_evenWhenStartupGateRequired() {
+        // FW-SEC-DSN-CR-018 §9.1：validator 工厂纯构造，不再调用 readiness（RD-018-6）
         properties.getKeyprov().getCertificateProfile().setRequireReadyAtStartup(true);
         when(environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false))
                 .thenReturn(false);
-        assertThrows(IllegalStateException.class, this::validator,
+        // 即便 readiness 未就绪，validator 装配也不抛异常（校验已移至独立 startup verifier）
+        assertNotNull(validator());
+    }
+
+    @Test
+    void startupVerifier_failsClosed_whenNotReady() {
+        properties.getKeyprov().getCertificateProfile().setRequireReadyAtStartup(true);
+        when(environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false))
+                .thenReturn(false);
+        assertThrows(IllegalStateException.class,
+                () -> startupVerifier().afterSingletonsInstantiated(),
                 "require-ready-at-startup=true 且 Profile readiness 未就绪须启动 fail-closed");
+    }
+
+    @Test
+    void startupVerifier_passes_whenReady() {
+        properties.getKeyprov().getCertificateProfile().setRequireReadyAtStartup(true);
+        assertDoesNotThrow(() -> startupVerifier().afterSingletonsInstantiated());
+    }
+
+    @Test
+    void startupVerifier_skips_whenNotRequired() {
+        // require-ready-at-startup=false：即便 readiness 未就绪也不阻止启动（请求面仍 fail-closed）
+        properties.getKeyprov().getCertificateProfile().setRequireReadyAtStartup(false);
+        when(environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false))
+                .thenReturn(false);
+        assertDoesNotThrow(() -> startupVerifier().afterSingletonsInstantiated());
+    }
+
+    @Test
+    void startupVerifier_beanRequiresReadiness() {
+        assertNotNull(startupVerifier());
+        assertThrows(IllegalStateException.class,
+                () -> configuration.keyprovStartupReadinessVerifier(new TestObjectProvider<>(), properties),
+                "readiness Bean 缺失时须启动 fail-closed");
     }
 
     @Test

@@ -5,95 +5,57 @@ import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.JWSObject;
 import com.nimbusds.jose.JWSSigner;
-import com.nimbusds.jose.JWEObject;
 import com.nimbusds.jose.Payload;
-import com.nimbusds.jose.crypto.ECDSASigner;
-import com.nimbusds.jose.crypto.PasswordBasedDecrypter;
-import com.nimbusds.jose.crypto.RSASSASigner;
-import com.nimbusds.jose.jwk.ECKey;
-import com.nimbusds.jose.jwk.JWK;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.util.Base64URL;
 import com.nimbusds.jwt.JWTClaimsSet;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Date;
 import java.util.Objects;
 import java.util.UUID;
 
 /**
- * 基于本地 JWK 的 OTT 提供者（FW-SEC-DSN-CR-008 §4.2）
+ * 基于命名 JWK signer 的无状态 OTT 路由门面（FW-SEC-DSN-CR-018 §7）。
  * <p>
- * 进程内完成 JOSE 签名，默认算法由 provisioner JWK 决定（如 ES256）。
- * 私钥来源仅支持：只读 Secret 文件（明文 JWK 或 step-ca 发布的口令加密 JWK）；
- * 不支持把明文私钥直接写入 application.yml / Nacos。
+ * 进程内完成 JOSE 签名，默认算法由 signer JWK 决定（如 ES256）。
+ * 自身<strong>无单一私钥状态</strong>，持有不可变 {@link JwkSignerRegistry} 并按请求
+ * {@code signerRef} 选择唯一 signer（RD-018-1/3）；私钥由 {@link JwkPrivateKeyHandle} 承载，
+ * 不出现在日志/异常/toString 中。
  * <p>
  * token TTL 默认 5 分钟且可缩短；包含唯一 jti=requestId+nonce，严禁缓存复用 OTT。
+ * <p>
+ * 运行时 registry 查找失败或 route mismatch 必须在签名/HTTP 调用前拒绝
+ * （FW-SEC-DSN-CR-018 §8，step-ca 调用次数为 0）。
  */
 public class JwkStepCaTokenProvider implements StepCaTokenProvider {
 
     private static final Logger log = LoggerFactory.getLogger(JwkStepCaTokenProvider.class);
 
-    private final JWK jwk;
+    private final JwkSignerRegistry signerRegistry;
     private final Duration defaultTtl;
 
-    public JwkStepCaTokenProvider(Path privateKeyFile, Path passwordFile, Duration defaultTtl) {
-        this.jwk = loadJwk(readFile(Objects.requireNonNull(privateKeyFile, "privateKeyFile must not be null")),
-                readPassword(passwordFile));
+    public JwkStepCaTokenProvider(JwkSignerRegistry signerRegistry, Duration defaultTtl) {
+        this.signerRegistry = Objects.requireNonNull(signerRegistry, "signerRegistry must not be null");
         this.defaultTtl = defaultTtl == null ? Duration.ofMinutes(5) : defaultTtl;
-        log.info("初始化 JwkStepCaTokenProvider(file): kid={}, kty={}, alg={}",
-                jwk.getKeyID(), jwk.getKeyType(), jwk.getAlgorithm());
-    }
-
-    /**
-     * 基于内容装配（适合配置中心/Nacos 下发）。
-     * <p>
-     * {@code jwkContent} 建议为 step-ca 口令加密 JWK（含 {@code encryptedKey}，密文安全可入 Nacos）；
-     * {@code password} 为解密口令，建议以环境变量占位符注入，勿在 Nacos 明文保存。
-     *
-     * @param jwkContent 明文 JWK 或口令加密 JWK 的 JSON 内容
-     * @param password   解密口令（明文 JWK 时可为 null）
-     * @param defaultTtl 默认 OTT 有效期
-     */
-    public JwkStepCaTokenProvider(String jwkContent, String password, Duration defaultTtl) {
-        if (jwkContent == null || jwkContent.isBlank()) {
-            throw new IllegalStateException("step-ca JWK content must not be blank");
-        }
-        this.jwk = loadJwk(jwkContent.trim(), password == null || password.isBlank() ? null : password.trim());
-        this.defaultTtl = defaultTtl == null ? Duration.ofMinutes(5) : defaultTtl;
-        log.info("初始化 JwkStepCaTokenProvider(content): kid={}, kty={}, alg={}",
-                jwk.getKeyID(), jwk.getKeyType(), jwk.getAlgorithm());
-    }
-
-    private static String readFile(Path privateKeyFile) {
-        try {
-            return Files.readString(privateKeyFile, StandardCharsets.UTF_8).trim();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to read provisioner JWK file: " + privateKeyFile, e);
-        }
-    }
-
-    private static String readPassword(Path passwordFile) {
-        if (passwordFile == null || !Files.isReadable(passwordFile)) {
-            return null;
-        }
-        try {
-            return Files.readString(passwordFile, StandardCharsets.UTF_8).trim();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to read provisioner JWK password file: " + passwordFile, e);
-        }
+        log.info("初始化 JwkStepCaTokenProvider: signers={}, defaultTtl={}",
+                signerRegistry.signerRefs(), this.defaultTtl);
     }
 
     @Override
     public String createToken(StepCaTokenRequest request) {
         Objects.requireNonNull(request, "request must not be null");
+        String signerRef = request.signerRef();
+        if (signerRef == null || signerRef.isBlank()) {
+            throw new IllegalStateException(
+                    "step-ca OTT requires an effective signerRef; signerRef is produced only by "
+                            + "the internal effective route and must not be absent (FW-SEC-DSN-CR-018 §7)");
+        }
+        JwkSignerDescriptor signer = signerRegistry.require(signerRef);
+
+        // 防御纵深：signer 显式绑定的 provisioner/kid 必须与请求路由一致（HTTP 调用前拒绝）
+        verifyRoute(request, signer);
+
         Duration ttl = request.ttl() != null ? request.ttl() : defaultTtl;
         Date now = new Date();
 
@@ -114,102 +76,37 @@ public class JwkStepCaTokenProvider implements StepCaTokenProvider {
         }
 
         try {
-            JWSAlgorithm alg = resolveAlgorithm();
-            JWSSigner signer = createSigner();
-            String kid = request.kid() != null ? request.kid() : jwk.getKeyID();
+            JWSAlgorithm alg = signer.privateKeyHandle().algorithm();
+            JWSSigner jwsSigner = signer.privateKeyHandle().createSigner();
+            // JWS header.kid = effective route kid（FW-SEC-DSN-CR-018 §7）
+            String kid = request.kid() != null ? request.kid() : signer.privateKeyHandle().kid();
             JWSHeader header = kid != null
                     ? new JWSHeader.Builder(alg).keyID(kid).build()
                     : new JWSHeader.Builder(alg).build();
             JWSObject jws = new JWSObject(header, new Payload(claims.build().toJSONObject()));
-            jws.sign(signer);
+            jws.sign(jwsSigner);
             return jws.serialize();
         } catch (JOSEException e) {
             throw new IllegalStateException("Failed to sign step-ca OTT", e);
         }
     }
 
-    private JWK loadJwk(String json, String password) {
-        if (password != null) {
-            try {
-                JWK decrypted = decryptEncryptedJwk(json, password);
-                log.info("解密 step-ca 加密 provisioner JWK 成功");
-                return decrypted;
-            } catch (Exception e) {
-                log.warn("加密 JWK 解密失败，尝试按明文 JWK 解析: {}", e.getMessage());
-            }
-        }
-        try {
-            return JWK.parse(json);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse provisioner JWK", e);
-        }
-    }
-
     /**
-     * 解密 step-ca 发布的口令加密 JWK，支持两种形态：
-     * <ol>
-     *   <li>step-ca ca.json 中的 provisioner JWK：公开 JWK 字段 + {@code encryptedKey}（JWE compact，PBES2）；</li>
-     *   <li>独立 JWE JSON 序列化（protected/encrypted_key/iv/ciphertext/tag）。</li>
-     * </ol>
+     * 运行时 route 一致性校验（FW-SEC-DSN-CR-018 §8）：signer 显式声明 provisioner/kid 时
+     * 必须与请求路由一致，冲突不得覆盖。lookup 失败与 mismatch 均在签名/HTTP 调用前拒绝。
      */
-    private JWK decryptEncryptedJwk(String json, String password) throws Exception {
-        ObjectMapper mapper = new ObjectMapper();
-        JsonNode node = mapper.readTree(json);
-
-        // 形态 1：step-ca ca.json 内嵌 provisioner（public JWK + encryptedKey JWE compact）
-        if (node.has("encryptedKey") && node.get("encryptedKey").isTextual()) {
-            JWEObject jwe = JWEObject.parse(node.get("encryptedKey").asText());
-            jwe.decrypt(new PasswordBasedDecrypter(password));
-            JsonNode privatePart = mapper.readTree(jwe.getPayload().toString());
-            com.fasterxml.jackson.databind.node.ObjectNode merged =
-                    (com.fasterxml.jackson.databind.node.ObjectNode) node.deepCopy();
-            merged.remove("encryptedKey");
-            // 合并私钥字段（d、x、y 等）
-            privatePart.fields().forEachRemaining(e -> merged.set(e.getKey(), e.getValue()));
-            return JWK.parse(mapper.writeValueAsString(merged));
+    private static void verifyRoute(StepCaTokenRequest request, JwkSignerDescriptor signer) {
+        if (signer.provisioner() != null && !signer.provisioner().equals(request.provisioner())) {
+            throw new IllegalStateException(
+                    "signer route mismatch at runtime: signerRef='" + signer.signerRef()
+                            + "' provisioner='" + signer.provisioner() + "' != request provisioner='"
+                            + request.provisioner() + "' (FW-SEC-DSN-CR-018 §8, fail-closed before HTTP)");
         }
-
-        // 形态 2：独立 JWE JSON 序列化
-        if (node.has("protected") && node.has("ciphertext") && node.has("iv") && node.has("tag")) {
-            Base64URL protectedHeader = new Base64URL(node.get("protected").asText());
-            Base64URL encryptedKey = node.has("encrypted_key") && !node.get("encrypted_key").isNull()
-                    ? new Base64URL(node.get("encrypted_key").asText()) : null;
-            Base64URL iv = new Base64URL(node.get("iv").asText());
-            Base64URL ciphertext = new Base64URL(node.get("ciphertext").asText());
-            Base64URL tag = new Base64URL(node.get("tag").asText());
-            JWEObject jwe = new JWEObject(protectedHeader, encryptedKey, iv, ciphertext, tag);
-            jwe.decrypt(new PasswordBasedDecrypter(password));
-            return JWK.parse(jwe.getPayload().toString());
+        if (signer.kid() != null && !signer.kid().equals(request.kid())) {
+            throw new IllegalStateException(
+                    "signer route mismatch at runtime: signerRef='" + signer.signerRef()
+                            + "' kid='" + signer.kid() + "' != request kid='" + request.kid()
+                            + "' (FW-SEC-DSN-CR-018 §8, fail-closed before HTTP)");
         }
-
-        throw new IllegalArgumentException("Not a supported encrypted JWK format");
-    }
-
-    private JWSAlgorithm resolveAlgorithm() {
-        if (jwk.getAlgorithm() instanceof JWSAlgorithm jwsAlg) {
-            return jwsAlg;
-        }
-        if (jwk instanceof ECKey ecKey) {
-            return switch (ecKey.getCurve().getName()) {
-                case "P-256" -> JWSAlgorithm.ES256;
-                case "P-384" -> JWSAlgorithm.ES384;
-                case "P-521" -> JWSAlgorithm.ES512;
-                default -> JWSAlgorithm.ES256;
-            };
-        }
-        if (jwk instanceof RSAKey) {
-            return JWSAlgorithm.RS256;
-        }
-        throw new IllegalStateException("Unsupported JWK type for OTT signing: " + jwk.getKeyType());
-    }
-
-    private JWSSigner createSigner() throws JOSEException {
-        if (jwk instanceof ECKey ecKey) {
-            return new ECDSASigner(ecKey.toECPrivateKey());
-        }
-        if (jwk instanceof RSAKey rsaKey) {
-            return new RSASSASigner(rsaKey.toRSAPrivateKey());
-        }
-        throw new IllegalStateException("Unsupported JWK type for OTT signing: " + jwk.getKeyType());
     }
 }

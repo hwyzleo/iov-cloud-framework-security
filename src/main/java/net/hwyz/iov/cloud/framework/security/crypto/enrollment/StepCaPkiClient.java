@@ -42,6 +42,7 @@ public class StepCaPkiClient implements PkiClient {
 
     private final StepCaApiClient apiClient;
     private final StepCaTokenProvider tokenProvider;
+    private final JwkSignerRegistry signerRegistry;
     private final StepCaProfilePolicyRegistry policyRegistry;
     private final CertificateEnrollmentResultStore resultStore;
     private final CertificateChainValidator chainValidator;
@@ -53,19 +54,7 @@ public class StepCaPkiClient implements PkiClient {
 
     public StepCaPkiClient(StepCaApiClient apiClient,
                            StepCaTokenProvider tokenProvider,
-                           StepCaProfilePolicyRegistry policyRegistry,
-                           CertificateEnrollmentResultStore resultStore,
-                           CertificateChainValidator chainValidator,
-                           EnrollmentIdempotencyService idempotencyService,
-                           CryptoMetrics metrics,
-                           URI endpoint,
-                           String rootSha256) {
-        this(apiClient, tokenProvider, policyRegistry, resultStore, chainValidator, idempotencyService,
-                metrics, endpoint, rootSha256, null);
-    }
-
-    public StepCaPkiClient(StepCaApiClient apiClient,
-                           StepCaTokenProvider tokenProvider,
+                           JwkSignerRegistry signerRegistry,
                            StepCaProfilePolicyRegistry policyRegistry,
                            CertificateEnrollmentResultStore resultStore,
                            CertificateChainValidator chainValidator,
@@ -76,6 +65,7 @@ public class StepCaPkiClient implements PkiClient {
                            CertificateStatusChecker certificateStatusChecker) {
         this.apiClient = Objects.requireNonNull(apiClient, "apiClient must not be null");
         this.tokenProvider = Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
+        this.signerRegistry = Objects.requireNonNull(signerRegistry, "signerRegistry must not be null");
         this.policyRegistry = Objects.requireNonNull(policyRegistry, "policyRegistry must not be null");
         this.resultStore = Objects.requireNonNull(resultStore, "resultStore must not be null");
         this.chainValidator = Objects.requireNonNull(chainValidator, "chainValidator must not be null");
@@ -143,6 +133,8 @@ public class StepCaPkiClient implements PkiClient {
         StepCaApiClient.StepCaSignResponse signResponse = null;
         try {
             policy = policyRegistry.resolve(command.profileName());
+            // FW-SEC-DSN-CR-018 §7：policy → 有效路由（signerRef/legacy + RD-018-5 一致性校验）
+            EffectiveStepCaProfileRoute route = StepCaProfileRouteResolver.resolve(policy, signerRegistry);
             // OTT 授权 SAN 取自 CSR（step-ca 要求 OTT 覆盖 CSR 的 SAN，否则 403）；
             // CSR 无 SAN 扩展时回退到 subject，兼容仅用 CN 的历史 CSR。
             List<String> sans = CsrSanExtractor.extractSans(command.csr());
@@ -151,8 +143,9 @@ public class StepCaPkiClient implements PkiClient {
             }
             String ott = tokenProvider.createToken(new StepCaTokenRequest(
                     requestId,
-                    policy.provisioner(),
-                    policy.kid(),
+                    route.provisioner(),
+                    route.kid(),
+                    route.signerRef(),
                     signUri,
                     command.subject(),
                     sans,
