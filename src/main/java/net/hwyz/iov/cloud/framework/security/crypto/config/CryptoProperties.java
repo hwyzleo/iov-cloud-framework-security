@@ -240,6 +240,22 @@ public class CryptoProperties {
          */
         private BusinessKey businessKey = new BusinessKey();
 
+        /**
+         * 标准 Transit 通道配置（FW-SEC-DSN-CR-019 §8）。
+         * <p>
+         * 供 FW-SEC 内置 TransitDerivedKeyProvider 直接调用 OpenBao Transit HMAC 使用；
+         * 专用 HTTP Client 关闭 body 日志/转储，Token 由认证组件短期持有。
+         */
+        private Transit transit = new Transit();
+
+        /**
+         * AppRole 认证配置（FW-SEC-DSN-CR-019 §5.2/§9）。
+         * <p>
+         * RoleID/SecretID 属于敏感材料：生产只允许经 Secret 注入
+         * （role-id-file/secret-id-file 或环境变量占位符），不得写入普通 Nacos/Git/日志。
+         */
+        private AppRole approle = new AppRole();
+
         public String getEndpoint() {
             return endpoint;
         }
@@ -310,6 +326,175 @@ public class CryptoProperties {
 
         public void setBusinessKey(BusinessKey businessKey) {
             this.businessKey = businessKey;
+        }
+
+        public Transit getTransit() {
+            return transit;
+        }
+
+        public void setTransit(Transit transit) {
+            this.transit = transit;
+        }
+
+        public AppRole getApprole() {
+            return approle;
+        }
+
+        public void setApprole(AppRole approle) {
+            this.approle = approle;
+        }
+
+        /**
+         * 标准 Transit 通道配置（crypto.kms.transit.*）。
+         */
+        public static class Transit {
+            /**
+             * Transit mount 路径段（如 {@code transit} → /v1/transit/...）。
+             */
+            private String mount = "transit";
+
+            /**
+             * 连接超时
+             */
+            private Duration connectTimeout = Duration.ofMillis(500);
+
+            /**
+             * 读超时
+             */
+            private Duration readTimeout = Duration.ofSeconds(1);
+
+            /**
+             * 总预算（连接、读取与有限重试共享，FW-SEC-DSN-CR-019 §8）
+             */
+            private Duration totalTimeout = Duration.ofSeconds(2);
+
+            /**
+             * 根元数据缓存 TTL（rootKeyVersion 稳定性窗口）。
+             */
+            private Duration rootMetadataTtl = Duration.ofSeconds(60);
+
+            public String getMount() {
+                return mount;
+            }
+
+            public void setMount(String mount) {
+                this.mount = mount;
+            }
+
+            public Duration getConnectTimeout() {
+                return connectTimeout;
+            }
+
+            public void setConnectTimeout(Duration connectTimeout) {
+                this.connectTimeout = connectTimeout;
+            }
+
+            public Duration getReadTimeout() {
+                return readTimeout;
+            }
+
+            public void setReadTimeout(Duration readTimeout) {
+                this.readTimeout = readTimeout;
+            }
+
+            public Duration getTotalTimeout() {
+                return totalTimeout;
+            }
+
+            public void setTotalTimeout(Duration totalTimeout) {
+                this.totalTimeout = totalTimeout;
+            }
+
+            public Duration getRootMetadataTtl() {
+                return rootMetadataTtl;
+            }
+
+            public void setRootMetadataTtl(Duration rootMetadataTtl) {
+                this.rootMetadataTtl = rootMetadataTtl;
+            }
+        }
+
+        /**
+         * AppRole 认证配置（crypto.kms.approle.*）。
+         */
+        public static class AppRole {
+            /**
+             * RoleID（敏感；生产经 role-id-file 或 Secret 注入）。
+             */
+            private String roleId;
+
+            /**
+             * SecretID（敏感；生产经 secret-id-file 或 Secret 注入）。
+             */
+            private String secretId;
+
+            /**
+             * RoleID 只读文件路径（Secret 挂载）。
+             */
+            private String roleIdFile;
+
+            /**
+             * SecretID 只读文件路径（Secret 挂载）。
+             */
+            private String secretIdFile;
+
+            /**
+             * Token 到期前的刷新缓冲（在 lease_duration 前提前刷新）。
+             */
+            private Duration tokenRefreshBuffer = Duration.ofSeconds(30);
+
+            /**
+             * 登录请求超时。
+             */
+            private Duration loginTimeout = Duration.ofSeconds(1);
+
+            public String getRoleId() {
+                return roleId;
+            }
+
+            public void setRoleId(String roleId) {
+                this.roleId = roleId;
+            }
+
+            public String getSecretId() {
+                return secretId;
+            }
+
+            public void setSecretId(String secretId) {
+                this.secretId = secretId;
+            }
+
+            public String getRoleIdFile() {
+                return roleIdFile;
+            }
+
+            public void setRoleIdFile(String roleIdFile) {
+                this.roleIdFile = roleIdFile;
+            }
+
+            public String getSecretIdFile() {
+                return secretIdFile;
+            }
+
+            public void setSecretIdFile(String secretIdFile) {
+                this.secretIdFile = secretIdFile;
+            }
+
+            public Duration getTokenRefreshBuffer() {
+                return tokenRefreshBuffer;
+            }
+
+            public void setTokenRefreshBuffer(Duration tokenRefreshBuffer) {
+                this.tokenRefreshBuffer = tokenRefreshBuffer;
+            }
+
+            public Duration getLoginTimeout() {
+                return loginTimeout;
+            }
+
+            public void setLoginTimeout(Duration loginTimeout) {
+                this.loginTimeout = loginTimeout;
+            }
         }
 
         /**
@@ -480,6 +665,13 @@ public class CryptoProperties {
          */
         private String rootVersionPolicy = "latest";
 
+        /**
+         * DERIVED_ROOT 派生 Provider 配置（FW-SEC-DSN-CR-019 §8）。
+         * <p>
+         * 仅 DERIVED_ROOT 使用；RANDOM_MATERIAL 仍由 {@code crypto.kms.business-key.*} 独立控制。
+         */
+        private DerivedKey derivedKey = new DerivedKey();
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -518,6 +710,139 @@ public class CryptoProperties {
 
         public void setRootVersionPolicy(String rootVersionPolicy) {
             this.rootVersionPolicy = rootVersionPolicy;
+        }
+
+        public DerivedKey getDerivedKey() {
+            return derivedKey;
+        }
+
+        public void setDerivedKey(DerivedKey derivedKey) {
+            this.derivedKey = derivedKey;
+        }
+
+        /**
+         * DERIVED_ROOT 派生 Provider 配置（crypto.provisioning.derived-key.*）。
+         */
+        public static class DerivedKey {
+            /**
+             * DERIVED_ROOT Provider 选择：
+             * <ul>
+             *   <li>{@code openbao-transit-local-wrap}：FW-SEC 内置 TransitDerivedKeyProvider
+             *       （直接调用 Transit HMAC + 进程内证书公钥封装，FW-SEC-DSN-CR-019）；</li>
+             *   <li>{@code openbao-business-key}：既有 Feign {@code /v1/business-key/derived-keys:wrap}
+             *       （迁移兼容，已废弃）；</li>
+             *   <li>未配置：按 {@code openbao-business-key} 处理并打印废弃告警；</li>
+             *   <li>其他值：启动 fail-closed。</li>
+             * </ul>
+             * 这是启动时静态选择，<strong>禁止</strong>请求失败后动态回退到另一 Provider。
+             */
+            private String provider = "openbao-business-key";
+
+            /**
+             * 启动时 TransitDerivedKeyCapability 未 READY 是否 fail-closed。
+             */
+            private boolean requireReadyAtStartup = false;
+
+            /**
+             * 首期派生版本（V2C 固定 {@code v1}）。
+             */
+            private String derivationVersion = "v1";
+
+            /**
+             * 根映射（BizType → transit-key/算法/允许 purpose/WrapMode）。
+             * <p>
+             * 必须与编译期 BizType allowlist 一致；Nacos 或调用请求不能新增任意 Transit Key。
+             */
+            private Map<String, RootPolicy> roots = new java.util.LinkedHashMap<>();
+
+            public String getProvider() {
+                return provider;
+            }
+
+            public void setProvider(String provider) {
+                this.provider = provider;
+            }
+
+            public boolean isRequireReadyAtStartup() {
+                return requireReadyAtStartup;
+            }
+
+            public void setRequireReadyAtStartup(boolean requireReadyAtStartup) {
+                this.requireReadyAtStartup = requireReadyAtStartup;
+            }
+
+            public String getDerivationVersion() {
+                return derivationVersion;
+            }
+
+            public void setDerivationVersion(String derivationVersion) {
+                this.derivationVersion = derivationVersion;
+            }
+
+            public Map<String, RootPolicy> getRoots() {
+                return roots;
+            }
+
+            public void setRoots(Map<String, RootPolicy> roots) {
+                this.roots = roots == null ? new java.util.LinkedHashMap<>() : roots;
+            }
+
+            /**
+             * 单根策略（crypto.provisioning.derived-key.roots.&lt;BIZ_TYPE&gt;.*）。
+             */
+            public static class RootPolicy {
+                /**
+                 * Transit 根密钥名（如 {@code v2c-comm-root}）。
+                 */
+                private String transitKey;
+
+                /**
+                 * Transit HMAC 算法（首期 {@code sha2-256}）。
+                 */
+                private String hmacAlgorithm = "sha2-256";
+
+                /**
+                 * 允许的派生 purpose。
+                 */
+                private List<String> purposes = java.util.List.of();
+
+                /**
+                 * 允许的 WrapMode（首期 {@code DEVICE_CERT_PUBLIC_KEY}）。
+                 */
+                private List<String> wrapModes = java.util.List.of();
+
+                public String getTransitKey() {
+                    return transitKey;
+                }
+
+                public void setTransitKey(String transitKey) {
+                    this.transitKey = transitKey;
+                }
+
+                public String getHmacAlgorithm() {
+                    return hmacAlgorithm;
+                }
+
+                public void setHmacAlgorithm(String hmacAlgorithm) {
+                    this.hmacAlgorithm = hmacAlgorithm;
+                }
+
+                public List<String> getPurposes() {
+                    return purposes;
+                }
+
+                public void setPurposes(List<String> purposes) {
+                    this.purposes = purposes == null ? java.util.List.of() : purposes;
+                }
+
+                public List<String> getWrapModes() {
+                    return wrapModes;
+                }
+
+                public void setWrapModes(List<String> wrapModes) {
+                    this.wrapModes = wrapModes == null ? java.util.List.of() : wrapModes;
+                }
+            }
         }
     }
 

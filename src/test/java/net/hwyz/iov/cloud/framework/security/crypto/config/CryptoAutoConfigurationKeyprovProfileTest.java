@@ -50,7 +50,9 @@ class CryptoAutoConfigurationKeyprovProfileTest {
                 new TestObjectProvider<TboxDeviceCertificateValidator>(
                         mock(TboxDeviceCertificateValidator.class)),
                 new TestObjectProvider<>(Clock.systemUTC()),
-                new TestObjectProvider<>(certResolver), environment);
+                new TestObjectProvider<>(certResolver),
+                new TestObjectProvider<>(),
+                environment);
     }
 
     private TboxDeviceCertificateValidator validator() {

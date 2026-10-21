@@ -26,6 +26,20 @@ import net.hwyz.iov.cloud.framework.security.crypto.KeyProvisioningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.SigningTemplate;
 import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.VmdBusinessKeyDirectoryClient;
+import net.hwyz.iov.cloud.framework.security.crypto.auth.AppRoleOpenBaoTokenProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.auth.OpenBaoTokenProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.auth.StaticTokenOpenBaoTokenProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.CertificatePublicKeyWrapper;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyContextEncoder;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicyRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyProviderRouter;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.KmsDerivedKeyProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.HttpTransitHmacClient;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyHealthIndicator;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyReadiness;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitHmacClient;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitRootMetadataCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cache.KeyCache;
 import net.hwyz.iov.cloud.framework.security.crypto.cipher.AeadCipher;
 import net.hwyz.iov.cloud.framework.security.crypto.client.DefaultKmsClient;
@@ -233,12 +247,217 @@ public class CryptoAutoConfiguration {
                                                            ObjectProvider<DeviceResolver> deviceResolverProvider,
                                                            ObjectProvider<CertResolver> certResolverProvider,
                                                            ObjectProvider<CertificateEvidenceValidator> evidenceValidatorProvider,
-                                                           ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
+                                                           ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider,
+                                                           ObjectProvider<DerivedKeyProviderRouter> routerProvider) {
         return new DefaultKeyProvisioningTemplate(kmsClient, cryptoMetrics, properties,
                 deviceResolverProvider.getIfAvailable(),
                 certResolverProvider.getIfAvailable(),
                 evidenceValidatorProvider.getIfAvailable(),
-                tboxValidatorProvider.getIfAvailable());
+                tboxValidatorProvider.getIfAvailable(),
+                routerProvider.getIfAvailable());
+    }
+
+    // ==================== DERIVED_ROOT Transit 本地派生（FW-SEC-DSN-CR-019） ====================
+
+    /**
+     * OpenBao 中立认证组件（FW-SEC-DSN-CR-019 §5.2）：AppRole 优先，静态 Token 兼容；
+     * 供 Transit 专用客户端与既有 Feign 通道复用。未配置凭据时不装配（legacy 无 Token 行为不变）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.kms", name = "endpoint")
+    public OpenBaoTokenProvider openBaoTokenProvider(CryptoProperties properties,
+                                                     ObjectProvider<Clock> clockProvider) {
+        CryptoProperties.Kms kms = properties.getKms();
+        CryptoProperties.Kms.AppRole approle = kms.getApprole();
+        boolean hasAppRole = approle != null
+                && (isNotBlank(approle.getRoleId()) || isNotBlank(approle.getRoleIdFile()))
+                && (isNotBlank(approle.getSecretId()) || isNotBlank(approle.getSecretIdFile()));
+        if (hasAppRole) {
+            log.info("OpenBao 认证装配: approle（短期 Token，仅认证组件内存）");
+            return AppRoleOpenBaoTokenProvider.fromConfig(URI.create(kms.getEndpoint()), approle,
+                    clockProvider.getIfAvailable());
+        }
+        if (isNotBlank(kms.getToken())) {
+            log.info("OpenBao 认证装配: 静态 token（开发/测试兼容）");
+            return new StaticTokenOpenBaoTokenProvider(kms.getToken());
+        }
+        if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            throw new IllegalStateException(
+                    "openbao-transit-local-wrap 需要配置 crypto.kms.token 或 crypto.kms.approle.* 凭据"
+                            + "（FW-SEC-DSN-CR-019 §9）");
+        }
+        return null;
+    }
+
+    /**
+     * Transit 专用客户端（FW-SEC-DSN-CR-019 §5.2）：仅 local-wrap 时装配；无 body 日志 HTTP Client。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TransitHmacClient transitHmacClient(CryptoProperties properties,
+                                               ObjectProvider<OpenBaoTokenProvider> tokenProviderProvider) {
+        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            return null;
+        }
+        if (!isNotBlank(properties.getKms().getEndpoint())) {
+            throw new IllegalStateException(
+                    "openbao-transit-local-wrap 需要配置 crypto.kms.endpoint");
+        }
+        OpenBaoTokenProvider tokenProvider = tokenProviderProvider.getIfAvailable();
+        if (tokenProvider == null) {
+            throw new IllegalStateException(
+                    "openbao-transit-local-wrap 需要配置 crypto.kms.token 或 crypto.kms.approle.* 凭据"
+                            + "（FW-SEC-DSN-CR-019 §9）");
+        }
+        CryptoProperties.Kms.Transit transit = properties.getKms().getTransit();
+        return new HttpTransitHmacClient(URI.create(properties.getKms().getEndpoint()),
+                transit.getMount(), tokenProvider,
+                transit.getConnectTimeout(), transit.getReadTimeout(), transit.getTotalTimeout());
+    }
+
+    /**
+     * Transit 根元数据缓存（rootKeyVersion 稳定性窗口，FW-SEC-DSN-CR-019 §10/§11）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TransitRootMetadataCache transitRootMetadataCache(CryptoProperties properties,
+                                                             ObjectProvider<TransitHmacClient> transitClientProvider) {
+        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            return null;
+        }
+        TransitHmacClient client = transitClientProvider.getIfAvailable();
+        if (client == null) {
+            return null;
+        }
+        return new TransitRootMetadataCache(client,
+                properties.getKms().getTransit().getRootMetadataTtl());
+    }
+
+    /**
+     * DERIVED_ROOT Transit 派生策略注册表（编译期 allowlist + 配置一致性校验）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public DerivedKeyPolicyRegistry derivedKeyPolicyRegistry(CryptoProperties properties) {
+        if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            // 启动一致性校验：roots 映射与编译期 allowlist 必须一致，否则 fail-closed
+            DerivedKeyPolicyRegistry.validateConfig(
+                    properties.getProvisioning().getDerivedKey().getDerivationVersion(),
+                    properties.getProvisioning().getDerivedKey().getRoots(),
+                    properties.getProvisioning().getDerivedKey().getRoots().get("V2C_COMM_ROOT"));
+        }
+        return new DerivedKeyPolicyRegistry();
+    }
+
+    /**
+     * TransitDerivedKey 聚合 readiness（FW-SEC-DSN-CR-019 §10）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TransitDerivedKeyReadiness transitDerivedKeyReadiness(
+            CryptoProperties properties,
+            ObjectProvider<OpenBaoTokenProvider> tokenProviderProvider,
+            ObjectProvider<TransitHmacClient> transitClientProvider,
+            ObjectProvider<CertificatePublicKeyWrapper> wrapperProvider,
+            ObjectProvider<DerivedKeyPolicyRegistry> registryProvider,
+            ObjectProvider<TransitRootMetadataCache> cacheProvider,
+            ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
+        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            return null;
+        }
+        OpenBaoTokenProvider tokenProvider = tokenProviderProvider.getIfAvailable();
+        TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
+        CertificatePublicKeyWrapper wrapper = wrapperProvider.getIfAvailable();
+        DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
+        TransitRootMetadataCache cache = cacheProvider.getIfAvailable();
+        if (tokenProvider == null || transitClient == null || wrapper == null
+                || registry == null || cache == null) {
+            throw new IllegalStateException(
+                    "openbao-transit-local-wrap 组件装配不完整（token/transit/wrapper/registry/cache）");
+        }
+        TransitDerivedKeyReadiness readiness = new TransitDerivedKeyReadiness(properties,
+                tokenProvider, transitClient, wrapper, registry, cache, tboxValidatorProvider);
+        if (properties.getProvisioning().getDerivedKey().isRequireReadyAtStartup()) {
+            readiness.verifyAtStartup();
+        }
+        return readiness;
+    }
+
+    /**
+     * TransitDerivedKeyProvider（FW-SEC-DSN-CR-019 §5.3）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TransitDerivedKeyProvider transitDerivedKeyProvider(
+            CryptoProperties properties,
+            ObjectProvider<DerivedKeyPolicyRegistry> registryProvider,
+            ObjectProvider<TransitHmacClient> transitClientProvider,
+            ObjectProvider<CertificatePublicKeyWrapper> wrapperProvider,
+            ObjectProvider<TransitRootMetadataCache> cacheProvider,
+            ObjectProvider<TransitDerivedKeyReadiness> readinessProvider,
+            ObjectProvider<Clock> clockProvider) {
+        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            return null;
+        }
+        DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
+        TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
+        CertificatePublicKeyWrapper wrapper = wrapperProvider.getIfAvailable();
+        TransitRootMetadataCache cache = cacheProvider.getIfAvailable();
+        TransitDerivedKeyReadiness readiness = readinessProvider.getIfAvailable();
+        if (registry == null || transitClient == null || wrapper == null
+                || cache == null || readiness == null) {
+            throw new IllegalStateException(
+                    "openbao-transit-local-wrap 组件装配不完整（registry/transit/wrapper/cache/readiness）");
+        }
+        return new TransitDerivedKeyProvider(registry, new DerivedKeyContextEncoder(),
+                transitClient, wrapper, cache, readiness, clockProvider.getIfAvailable());
+    }
+
+    /**
+     * DERIVED_ROOT Provider 路由器（FW-SEC-DSN-CR-019 §4/§12）：启动静态选择，禁动态回退。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning", name = "enabled", havingValue = "true")
+    public DerivedKeyProviderRouter derivedKeyProviderRouter(
+            CryptoProperties properties,
+            ObjectProvider<TransitDerivedKeyProvider> transitProviderProvider,
+            ObjectProvider<KmsClient> kmsClientProvider) {
+        String provider = properties.getProvisioning().getDerivedKey().getProvider();
+        if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(provider)) {
+            TransitDerivedKeyProvider transit = transitProviderProvider.getIfAvailable();
+            if (transit == null) {
+                throw new IllegalStateException(
+                        "derived-key.provider=openbao-transit-local-wrap 但 TransitDerivedKeyProvider 未装配");
+            }
+            log.info("DERIVED_ROOT Provider 路由: {}", provider);
+            return new DerivedKeyProviderRouter(provider, transit, null);
+        }
+        if (DerivedKeyProviderRouter.LEGACY_PROVIDER.equals(provider)) {
+            KmsClient kmsClient = kmsClientProvider.getIfAvailable();
+            if (kmsClient == null) {
+                throw new IllegalStateException(
+                        "derived-key.provider=openbao-business-key 需要 KmsClient 已装配");
+            }
+            log.warn("derived-key.provider=openbao-business-key 为迁移兼容路径（已废弃）："
+                    + "建议切换 openbao-transit-local-wrap（FW-SEC-DSN-CR-019 §12）；"
+                    + "新 Provider 调用失败不会自动回退到本路径");
+            return new DerivedKeyProviderRouter(provider, null, new KmsDerivedKeyProvider(kmsClient));
+        }
+        throw new IllegalStateException(
+                "crypto.provisioning.derived-key.provider 未知值: " + provider
+                        + "（允许: openbao-transit-local-wrap | openbao-business-key）");
+    }
+
+    private static boolean isNotBlank(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**
@@ -298,11 +517,12 @@ public class CryptoAutoConfiguration {
                                              ObjectProvider<TboxDeviceCertificateValidator> validatorProvider,
                                              ObjectProvider<Clock> clockProvider,
                                              ObjectProvider<CertResolver> certResolverProvider,
+                                             ObjectProvider<TransitDerivedKeyReadiness> transitReadinessProvider,
                                              Environment environment) {
         boolean revocationEnabled = Boolean.TRUE.equals(
                 environment.getProperty("crypto.pki.revocation.enabled", Boolean.class, false));
         return new KeyprovReadiness(properties, validatorProvider, clockProvider,
-                certResolverProvider.getIfAvailable(), revocationEnabled);
+                certResolverProvider.getIfAvailable(), revocationEnabled, transitReadinessProvider);
     }
 
     /**
@@ -654,6 +874,24 @@ public class CryptoAutoConfiguration {
                 CryptoProperties properties,
                 ObjectProvider<KeyprovReadiness> readinessProvider) {
             return new KeyprovCertificateProfileHealthIndicator(properties, readinessProvider.getIfAvailable());
+        }
+    }
+
+    /**
+     * Transit 派生能力健康（FW-SEC-DSN-CR-019 §10）：仅 local-wrap 时装配；
+     * 未就绪报告 NOT_READY，供 VMD keyprov activation 门禁使用。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.health.HealthIndicator.class)
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider", havingValue = "openbao-transit-local-wrap")
+    public static class TransitDerivedKeyHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public TransitDerivedKeyHealthIndicator transitDerivedKeyHealthIndicator(
+                CryptoProperties properties,
+                ObjectProvider<TransitDerivedKeyReadiness> readinessProvider) {
+            return new TransitDerivedKeyHealthIndicator(properties, readinessProvider.getIfAvailable());
         }
     }
 

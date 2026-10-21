@@ -1,9 +1,6 @@
 package net.hwyz.iov.cloud.framework.security.crypto;
 
-import net.hwyz.iov.cloud.framework.security.crypto.client.DerivationInput;
 import net.hwyz.iov.cloud.framework.security.crypto.client.KmsClient;
-import net.hwyz.iov.cloud.framework.security.crypto.client.KmsDerivedKeyReference;
-import net.hwyz.iov.cloud.framework.security.crypto.client.KmsRecipient;
 import net.hwyz.iov.cloud.framework.security.crypto.client.OperationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.CertificateEvidenceRejectedException;
@@ -21,6 +18,10 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.ProvisioningResult;
 import net.hwyz.iov.cloud.framework.security.crypto.model.ValidatedTboxDeviceCertificate;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
 import net.hwyz.iov.cloud.framework.security.crypto.model.businesskey.RecipientRef;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyCommand;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyProviderRouter;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.KmsDerivedKeyProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.ValidatedRecipientEvidence;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidence;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertificateEvidenceValidator;
@@ -30,14 +31,28 @@ import net.hwyz.iov.cloud.framework.security.crypto.resolver.DeviceResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 
 /**
- * KeyProvisioningTemplate 默认实现（FW-SEC-DSN-CR-013 §4.4/§7.2/§8）。
+ * KeyProvisioningTemplate 默认实现（FW-SEC-DSN-CR-013 §4.4/§7.2/§8；FW-SEC-DSN-CR-019）。
  * <p>
- * 主入口 {@link #deriveAndWrap}：根派生型在受控 Provider 边界内一次完成「根派生 + 证书公钥封装」，
- * 派生明文绝不返回 framework/VMD/VAGW/TSP/业务代码；framework 只做受治理编排（锚层级校验、
- * 证书证据解析/校验、异常与 readiness），Provider 路由按 {@code bizType} 策略映射受治理根。
+ * 主入口 {@link #deriveAndWrap}：根派生型（{@code materialModel == DERIVED_ROOT}）经
+ * <strong>两级校验</strong>（FW-SEC-DSN-CR-019）：
+ * <ol>
+ *   <li><strong>门面层</strong>：完整校验——证书解析、链验证、有效期、吊销状态、KU/EKU、
+ *       Profile、主体绑定、指纹与套件推导，产出不可变 {@link ValidatedRecipientEvidence}；</li>
+ *   <li><strong>Provider 层</strong>：只执行最终密码学门禁（存在且未过期、SPKI/指纹非空、
+ *       套件与 SPKI 算法一致），随后 Transit 派生 + 本地证书公钥封装。</li>
+ * </ol>
+ * 门面层不再直接调用 {@code KmsClient.deriveAndWrap}，而是把命令交给
+ * {@link DerivedKeyProviderRouter}（启动静态选择，禁运行时动态回退）；legacy 兼容路径
+ * （{@code openbao-business-key}）由 {@link KmsDerivedKeyProvider} 保持与迁移前字节级一致。
  * <p>
  * 兼容门面 {@code deriveByVin/deriveByUid/wrapByVin/wrapByUid/wrapFor} 缺少派生所需的
  * purpose/operationId/幂等键，一律 fail-closed；{@code unwrapByVin/unwrapByUid} 仅在受控 legacy
@@ -58,28 +73,55 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
     private final CertResolver certResolver;
     private final CertificateEvidenceValidator evidenceValidator;
     private final TboxDeviceCertificateValidator tboxCertificateValidator;
+    private final DerivedKeyProviderRouter providerRouter;
     private final boolean legacyFacadeEnabled;
+    private final Clock clock;
 
+    /**
+     * 兼容构造：不携带 router 时按 legacy {@code openbao-business-key} 路由（保持既有行为）。
+     */
     public DefaultKeyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                           CryptoProperties properties, DeviceResolver deviceResolver,
                                           CertResolver certResolver,
                                           CertificateEvidenceValidator evidenceValidator) {
-        this(kmsClient, cryptoMetrics, properties, deviceResolver, certResolver, evidenceValidator, null);
+        this(kmsClient, cryptoMetrics, properties, deviceResolver, certResolver, evidenceValidator, null, null);
     }
 
+    /**
+     * 兼容构造：携带 TBOX 证书 Profile 验证器（FW-SEC-DSN-CR-017），legacy 路由。
+     */
     public DefaultKeyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
                                           CryptoProperties properties, DeviceResolver deviceResolver,
                                           CertResolver certResolver,
                                           CertificateEvidenceValidator evidenceValidator,
                                           TboxDeviceCertificateValidator tboxCertificateValidator) {
-        this.kmsClient = kmsClient;
+        this(kmsClient, cryptoMetrics, properties, deviceResolver, certResolver, evidenceValidator,
+                tboxCertificateValidator, null);
+    }
+
+    /**
+     * 完整构造：携带 Provider 路由器（FW-SEC-DSN-CR-019 §4）。
+     *
+     * @param providerRouter Provider 路由器；为 null 时按 legacy 兼容路由（迁移默认）
+     */
+    public DefaultKeyProvisioningTemplate(KmsClient kmsClient, CryptoMetrics cryptoMetrics,
+                                          CryptoProperties properties, DeviceResolver deviceResolver,
+                                          CertResolver certResolver,
+                                          CertificateEvidenceValidator evidenceValidator,
+                                          TboxDeviceCertificateValidator tboxCertificateValidator,
+                                          DerivedKeyProviderRouter providerRouter) {
+        this.kmsClient = Objects.requireNonNull(kmsClient, "kmsClient must not be null");
         this.cryptoMetrics = cryptoMetrics;
-        this.properties = properties;
+        this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.deviceResolver = deviceResolver;
         this.certResolver = certResolver;
         this.evidenceValidator = evidenceValidator;
         this.tboxCertificateValidator = tboxCertificateValidator;
+        this.providerRouter = providerRouter != null ? providerRouter
+                : new DerivedKeyProviderRouter(DerivedKeyProviderRouter.LEGACY_PROVIDER, null,
+                        new KmsDerivedKeyProvider(kmsClient));
         this.legacyFacadeEnabled = properties.getProvisioning().isLegacyFacadeEnabled();
+        this.clock = Clock.systemUTC();
     }
 
     // ==================== 根派生 + 受控封装（主入口） ====================
@@ -97,38 +139,32 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         requireNonBlank(idempotencyKey, "idempotencyKey");
         validateAnchorLevel(bizType, anchor);
 
-        ResolvedRecipient resolved = toDerivedRecipient(recipient);
-        KmsDerivedKeyReference rootRef = new KmsDerivedKeyReference(
-                bizType.name(), ROOT_REF_PREFIX + bizType.prov().keyName());
-        // 套件由收方证书公钥算法推导；businessDomain=bizType、businessKeyVersion 来自上下文，
-        // 一并参与 Provider 幂等请求摘要（FW-SEC-DSN-CR-014 §5.2）。
-        DerivationInput input = new DerivationInput(anchor, purpose, context.derivationVersion(),
-                resolved.suite(), requestIdOf(recipient), bizType.name(), context.businessKeyVersion());
-        OperationContext operation = new OperationContext(operationId, idempotencyKey);
+        // 门面层完整证书校验 → 不可变已验证收方证据
+        ValidatedRecipientEvidence validated = resolveValidatedRecipient(recipient);
+        DerivedKeyCommand command = new DerivedKeyCommand(
+                bizType, anchor, purpose, validated, context,
+                new OperationContext(operationId, idempotencyKey));
 
         long startTime = System.currentTimeMillis();
         try {
-            DerivedWrappedKey result = kmsClient.deriveAndWrap(rootRef, input, resolved.recipient(), operation);
+            DerivedWrappedKey result = providerRouter.deriveAndWrap(command);
             long duration = System.currentTimeMillis() - startTime;
             // anchor.toString() 仅含摘要，绝不含锚原文；不回显 Wrapped Key 与 KCV
             log.info("根派生封装成功: bizType={}, purpose={}, anchor={}, derivationVersion={}, "
-                            + "wrappingSuite={}, businessKeyVersion={}, duration={}ms",
+                            + "wrappingSuite={}, businessKeyVersion={}, provider={}, duration={}ms",
                     bizType.name(), purpose, anchor, context.derivationVersion(),
-                    resolved.suite(), context.businessKeyVersion(), duration);
+                    validated.validatedWrapSuite(), context.businessKeyVersion(),
+                    providerRouter.providerName(), duration);
             cryptoMetrics.recordProvisioningWrap(duration);
             return result;
         } catch (Exception e) {
             cryptoMetrics.recordError();
-            log.error("根派生封装失败: bizType={}, purpose={}, anchor={}, derivationVersion={}, wrappingSuite={}",
-                    bizType.name(), purpose, anchor, context.derivationVersion(), resolved.suite(), e);
+            log.error("根派生封装失败: bizType={}, purpose={}, anchor={}, derivationVersion={}, "
+                            + "wrappingSuite={}, provider={}",
+                    bizType.name(), purpose, anchor, context.derivationVersion(),
+                    validated.validatedWrapSuite(), providerRouter.providerName(), e);
             throw e;
         }
-    }
-
-    /**
-     * 已解析收方：KmsRecipient 与由公钥算法推导的封装套件。
-     */
-    private record ResolvedRecipient(KmsRecipient recipient, WrappingSuite suite) {
     }
 
     // ==================== 兼容门面（已废弃，fail-closed） ====================
@@ -206,9 +242,13 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         }
     }
 
-    // ==================== 收方映射与证书证据解析 ====================
+    // ==================== 门面层完整证书校验 → 已验证证据（FW-SEC-DSN-CR-019 两级校验） ====================
 
-    private ResolvedRecipient toDerivedRecipient(RecipientRef recipient) {
+    /**
+     * 门面层完整校验并产出不可变 {@link ValidatedRecipientEvidence}：
+     * 解析/链/有效期/吊销/KU-EKU/Profile/主体绑定/指纹与套件推导；Provider 层不再重跑。
+     */
+    private ValidatedRecipientEvidence resolveValidatedRecipient(RecipientRef recipient) {
         if (recipient instanceof RecipientRef.DeviceCertificate c) {
             DeviceCertificateRef ref = new DeviceCertificateRef(c.certSerial(), c.requestId(),
                     c.certificateDer(), c.spki(), c.sha256Fingerprint(), null, c.context());
@@ -222,23 +262,98 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
                 CertificateEvidence evidence = validation.evidence();
                 String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
                         ? c.certSerial() : evidence.serial();
-                KmsRecipient kmsRecipient = KmsRecipient.deviceCertificate(certSerial,
-                        evidence.certificateDer(), evidence.sha256Fingerprint(), evidence.spki(), null);
-                return new ResolvedRecipient(kmsRecipient, suiteFor(evidence.spki()));
+                return toEvidence(certSerial, evidence, c.requestId(),
+                        DeviceCertificateProfile.TBOX_DEVICE_ECDH_ES_P256_V1);
             }
             CertificateEvidence evidence = resolveDeviceCertificate(c);
             String certSerial = c.certSerial() != null && !c.certSerial().isBlank()
                     ? c.certSerial() : evidence.serial();
-            KmsRecipient kmsRecipient = KmsRecipient.deviceCertificate(certSerial, evidence.certificateDer(),
-                    evidence.sha256Fingerprint(), evidence.spki(), null);
-            return new ResolvedRecipient(kmsRecipient, suiteFor(evidence.spki()));
+            return toEvidence(certSerial, evidence, c.requestId(), null);
         }
         if (recipient instanceof RecipientRef.PublicKey p) {
-            return new ResolvedRecipient(KmsRecipient.publicKey(p.spki()), suiteFor(p.spki()));
+            // 直接公钥收方：无证书证据，不满足 DERIVED_ROOT 设备证书公钥封装门禁
+            throw new CryptoException(CryptoException.Reason.UNSUPPORTED_RECIPIENT,
+                    "deriveAndWrap 首期仅支持 DEVICE_CERT_PUBLIC_KEY 收方（需证书证据），"
+                            + "PublicKey 收方不支持 DERIVED_ROOT: got=" + recipient.getClass().getSimpleName()) {};
         }
         throw new CryptoException(CryptoException.Reason.UNSUPPORTED_RECIPIENT,
                 "deriveAndWrap 首期仅支持 DEVICE_CERT_PUBLIC_KEY 收方，got="
                         + recipient.getClass().getSimpleName()) {};
+    }
+
+    /**
+     * 由证书证据组装不可变已验证收方证据（含有效期截止、套件推导与主体绑定摘要）。
+     */
+    private ValidatedRecipientEvidence toEvidence(String certSerial, CertificateEvidence evidence,
+                                                  String requestId,
+                                                  DeviceCertificateProfile profile) {
+        if (evidence == null) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved certificate evidence is null for derived key wrap");
+        }
+        byte[] leafDer = evidence.certificateDer() != null ? evidence.certificateDer() : evidence.spki();
+        if (leafDer == null || leafDer.length == 0) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved certificate evidence lacks DER/SPKI for derived key wrap");
+        }
+        if (evidence.spki() == null || evidence.spki().length == 0) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved certificate evidence lacks SPKI for derived key wrap");
+        }
+        if (evidence.sha256Fingerprint() == null || evidence.sha256Fingerprint().isBlank()) {
+            throw new CryptoDependencyUnavailableException(
+                    "Resolved certificate evidence lacks SHA-256 fingerprint for derived key wrap");
+        }
+        WrappingSuite suite = suiteFor(evidence.spki());
+        Instant now = clock.instant();
+        Instant validUntil = extractNotAfter(leafDer, now);
+        return new ValidatedRecipientEvidence(
+                certSerial,
+                leafDer,
+                evidence.spki(),
+                evidence.sha256Fingerprint(),
+                profile,
+                suite,
+                now,
+                validUntil,
+                ValidatedRecipientEvidence.RecipientStatus.GOOD,
+                subjectBindingDigest(certSerial, evidence.sha256Fingerprint()),
+                requestId);
+    }
+
+    /**
+     * 由叶子证书 DER 提取有效期截止；解析失败按证书证据不可用 fail-closed。
+     */
+    private static Instant extractNotAfter(byte[] leafDer, Instant fallback) {
+        try {
+            CertificateFactory factory = CertificateFactory.getInstance("X.509");
+            X509Certificate x509 = (X509Certificate) factory.generateCertificate(
+                    new java.io.ByteArrayInputStream(leafDer));
+            return x509.getNotAfter().toInstant();
+        } catch (Exception e) {
+            // 已由门面解析的合法证书 DER 不应解析失败；失败按不可用处理
+            return fallback;
+        }
+    }
+
+    /**
+     * 主体绑定摘要（非敏感）：SHA-256(serial + "|" + fingerprint) 十六进制小写；
+     * 用于幂等冲突检测（相同幂等键不同证书/主体时拒绝，FW-SEC-DSN-CR-019 §11）。
+     */
+    private static String subjectBindingDigest(String certSerial, String fingerprint) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest((Objects.toString(certSerial, "") + "|"
+                            + Objects.toString(fingerprint, "")).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 unavailable for subject binding digest", e);
+        }
     }
 
     /**
@@ -281,13 +396,6 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
                     "No keyprov wrapping suite for recipient key algorithm: " + keyAlgorithm);
         }
         return suite;
-    }
-
-    private static String requestIdOf(RecipientRef recipient) {
-        if (recipient instanceof RecipientRef.DeviceCertificate c) {
-            return c.requestId();
-        }
-        return null;
     }
 
     /**

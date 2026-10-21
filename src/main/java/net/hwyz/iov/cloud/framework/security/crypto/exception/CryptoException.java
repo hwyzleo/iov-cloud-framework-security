@@ -50,7 +50,9 @@ public abstract class CryptoException extends RuntimeException {
         CERTIFICATE_STATUS_OUTCOME_UNKNOWN,
         // 导入证明验签（FW-SEC-DSN-CR-016 §7）：确定性拒绝 / 能力未装配
         IMPORT_PROOF_REJECTED,
-        IMPORT_PROOF_VERIFICATION_UNAVAILABLE
+        IMPORT_PROOF_VERIFICATION_UNAVAILABLE,
+        // Transit 派生/封装（FW-SEC-DSN-CR-019 §10）：稳定 reason 见 TransitReason
+        TRANSIT_DERIVED_KEY
     }
 
     public CryptoException(Reason reason, String message) {

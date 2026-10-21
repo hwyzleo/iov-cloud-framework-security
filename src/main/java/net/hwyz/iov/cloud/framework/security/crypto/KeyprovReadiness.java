@@ -1,8 +1,10 @@
 package net.hwyz.iov.cloud.framework.security.crypto;
 
 import net.hwyz.iov.cloud.framework.security.crypto.config.CryptoProperties;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyProviderRouter;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.CertResolver;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.FailClosedCertResolver;
+import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyReadiness;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -30,6 +32,7 @@ import java.util.Objects;
  *   AND provisioningEnabled
  *   AND importProofReady                 // import-proof 装配 && capability 自检
  *   AND envelopeCapabilitiesReady        // STRUCTURED_ENVELOPE_VIEW_V1 + CORE_ENVELOPE_DIGEST_VERIFY_V1
+ *   AND transitDerivedKeyReady           // local-wrap 时 TransitDerivedKey readiness（FW-SEC-DSN-CR-019 §10）
  * </pre>
  * <p>
  * Profile / provisioning / import-proof 可独立装配；关闭时不声明对应 capability，完整
@@ -46,6 +49,7 @@ public class KeyprovReadiness {
     private final CryptoProperties properties;
     private final ObjectProvider<TboxDeviceCertificateValidator> validatorProvider;
     private final ObjectProvider<Clock> clockProvider;
+    private final ObjectProvider<TransitDerivedKeyReadiness> transitReadinessProvider;
     private final CertResolver certResolver;
     private final boolean revocationEnabled;
 
@@ -54,11 +58,21 @@ public class KeyprovReadiness {
                             ObjectProvider<Clock> clockProvider,
                             CertResolver certResolver,
                             boolean revocationEnabled) {
+        this(properties, validatorProvider, clockProvider, certResolver, revocationEnabled, null);
+    }
+
+    public KeyprovReadiness(CryptoProperties properties,
+                            ObjectProvider<TboxDeviceCertificateValidator> validatorProvider,
+                            ObjectProvider<Clock> clockProvider,
+                            CertResolver certResolver,
+                            boolean revocationEnabled,
+                            ObjectProvider<TransitDerivedKeyReadiness> transitReadinessProvider) {
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.validatorProvider = validatorProvider;
         this.clockProvider = clockProvider;
         this.certResolver = certResolver;
         this.revocationEnabled = revocationEnabled;
+        this.transitReadinessProvider = transitReadinessProvider;
     }
 
     /**
@@ -135,6 +149,21 @@ public class KeyprovReadiness {
             return "envelope capabilities not ready "
                     + "(STRUCTURED_ENVELOPE_VIEW_V1 / CORE_ENVELOPE_DIGEST_VERIFY_V1)";
         }
+        // DERIVED_ROOT Transit 本地派生聚合（FW-SEC-DSN-CR-019 §10）：
+        // local-wrap 时 TransitDerivedKey readiness 必须 READY；business-key capability 不再门控 DERIVED_ROOT。
+        if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            TransitDerivedKeyReadiness transit = transitReadinessProvider == null
+                    ? null : transitReadinessProvider.getIfAvailable();
+            if (transit == null) {
+                return "TRANSIT_DERIVED_KEY 未就绪: transit readiness 未装配"
+                        + "（local-wrap 需要完整组件装配）";
+            }
+            String transitReason = transit.notReadyReason();
+            if (transitReason != null) {
+                return "TRANSIT_DERIVED_KEY 未就绪: " + transitReason;
+            }
+        }
         return null;
     }
 
@@ -155,6 +184,16 @@ public class KeyprovReadiness {
             throw new IllegalStateException(
                     "TBOX 设备证书 Profile capability 未 READY，启动 fail-closed"
                             + "（FW-SEC-DSN-CR-017 §9）: " + reason);
+        }
+        // FW-SEC-DSN-CR-019 §10：local-wrap 时 TransitDerivedKey readiness 未 READY 同样启动 fail-closed
+        if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
+                properties.getProvisioning().getDerivedKey().getProvider())) {
+            String aggregateReason = keyprovEcdhEsV1ReadyReason();
+            if (aggregateReason != null) {
+                throw new IllegalStateException(
+                        "完整 Keyprov readiness 未 READY，启动 fail-closed"
+                                + "（FW-SEC-DSN-CR-019 §10）: " + aggregateReason);
+            }
         }
         log.info("TBOX 设备证书 Profile capability READY: capability={}",
                 KeyprovCertificateProfileCapability.TBOX_DEVICE_CERT_PROFILE_ECDH_ES_P256_V1);
