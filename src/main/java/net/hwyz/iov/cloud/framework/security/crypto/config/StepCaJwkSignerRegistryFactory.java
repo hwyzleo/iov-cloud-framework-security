@@ -104,7 +104,12 @@ public final class StepCaJwkSignerRegistryFactory {
                 log.warn("step-ca signer '{}' 使用内联 JWK 内容（配置中心下发）；生产优先 file/Secret Provider "
                         + "（FW-SEC-DSN-CR-018 §5.2）", signerRef);
             }
-            handle = JwkPrivateKeyHandle.fromContent(privateKeyContent.trim(), password);
+            try {
+                handle = JwkPrivateKeyHandle.fromContent(privateKeyContent.trim(), password);
+            } catch (IllegalStateException e) {
+                throw new IllegalStateException(
+                        "step-ca signer '" + signerRef + "' JWK load failed: " + e.getMessage(), e);
+            }
         } else if (hasFile) {
             Path keyPath = Path.of(privateKeyFile);
             if (!Files.isReadable(keyPath)) {
@@ -117,7 +122,12 @@ public final class StepCaJwkSignerRegistryFactory {
                 throw new IllegalStateException(
                         "step-ca signer '" + signerRef + "' password file is not readable: " + passwordPath);
             }
-            handle = JwkPrivateKeyHandle.fromFile(keyPath, passwordPath);
+            try {
+                handle = JwkPrivateKeyHandle.fromFile(keyPath, passwordPath);
+            } catch (IllegalStateException e) {
+                throw new IllegalStateException(
+                        "step-ca signer '" + signerRef + "' JWK load failed: " + e.getMessage(), e);
+            }
         } else {
             throw new IllegalStateException(
                     "step-ca signer '" + signerRef + "' requires a private key source: configure either "

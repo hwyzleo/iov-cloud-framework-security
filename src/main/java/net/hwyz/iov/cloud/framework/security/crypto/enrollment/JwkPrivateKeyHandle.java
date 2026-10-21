@@ -147,18 +147,53 @@ public final class JwkPrivateKeyHandle {
     }
 
     private static JWK loadJwk(String json, String password) {
-        if (password != null) {
-            try {
-                JWK decrypted = decryptEncryptedJwk(json, password);
-                return decrypted;
-            } catch (Exception e) {
-                // 尝试按明文 JWK 解析
-            }
+        if (looksLikeEncryptedJwk(json)) {
+            // 口令加密 JWK：口令缺失/错误必须显式报错，不得静默回退明文解析
+            return loadEncryptedJwk(json, requireDecryptionPassword(password));
         }
         try {
             return JWK.parse(json);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse provisioner JWK", e);
+            throw new IllegalStateException(
+                    "Failed to parse provisioner JWK: the configured JWK content is not a valid plain private "
+                            + "JWK JSON (missing or incorrect 'kty'? verify the config-center content, "
+                            + "FW-SEC-DSN-CR-018 §5.2)", e);
+        }
+    }
+
+    /**
+     * 判断内容是否为 step-ca 口令加密 JWK 形态（内嵌 {@code encryptedKey} 或独立 JWE JSON）。
+     */
+    private static boolean looksLikeEncryptedJwk(String json) {
+        try {
+            JsonNode node = new ObjectMapper().readTree(json);
+            if (node.has("encryptedKey") && node.get("encryptedKey").isTextual()) {
+                return true;
+            }
+            return node.has("protected") && node.has("ciphertext")
+                    && node.has("iv") && node.has("tag");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String requireDecryptionPassword(String password) {
+        if (password == null || password.isBlank()) {
+            throw new IllegalStateException(
+                    "Encrypted JWK provided but the decryption password is not configured (set the signer's "
+                            + "password or password-file; prefer an env-injected placeholder, "
+                            + "FW-SEC-DSN-CR-018 §5.2)");
+        }
+        return password.trim();
+    }
+
+    private static JWK loadEncryptedJwk(String json, String password) {
+        try {
+            return decryptEncryptedJwk(json, password);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Failed to decrypt the step-ca provisioner JWK (wrong decryption password or unsupported "
+                            + "encrypted-JWK format)", e);
         }
     }
 

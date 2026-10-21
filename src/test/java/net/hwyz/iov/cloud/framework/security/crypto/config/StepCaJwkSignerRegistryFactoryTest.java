@@ -115,6 +115,25 @@ class StepCaJwkSignerRegistryFactoryTest {
     }
 
     @Test
+    void create_shouldReject_invalidJwkContent_withSignerContext() throws Exception {
+        // 复现 VMD 启动失败场景：命名 signer 内联 JWK 内容缺 kty（或口令缺失被识别为加密形态）
+        // 报错必须指出具体 signerRef，便于运维直接定位 Nacos 数据。
+        CryptoProperties.Pki.StepCa stepCa = stepCa();
+        stepCa.getJwk().getSigners().put("tsp-client",
+                signerConfig("openiov", "tsp-kid", generateKey("tsp-kid").toJSONString()));
+        CryptoProperties.Pki.JwkSignerProperties bad = signerConfig("tbox-device-ecdh-v1", "ecdh-kid",
+                "{\"kid\":\"ecdh-kid\",\"crv\":\"P-256\",\"use\":\"sig\"}"); // 缺 kty
+        stepCa.getJwk().getSigners().put("tbox-device-ecdh-v1", bad);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> StepCaJwkSignerRegistryFactory.create(stepCa));
+
+        assertTrue(ex.getMessage().contains("tbox-device-ecdh-v1"),
+                "报错必须定位具体 signer: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("Failed to parse provisioner JWK"), ex.getMessage());
+    }
+
+    @Test
     void create_shouldReject_unsupportedTokenProvider() {
         CryptoProperties.Pki.StepCa stepCa = stepCa();
         stepCa.setTokenProvider("nimbus");
