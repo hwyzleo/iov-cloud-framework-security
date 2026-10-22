@@ -292,16 +292,34 @@ public class CryptoAutoConfiguration {
     }
 
     /**
+     * CertificatePublicKeyWrapper（FW-SEC-DSN-CR-019 §5.4 / RD-019-9/10）。
+     * <p>
+     * local-wrap 能力下由 FW-SEC AutoConfiguration 显式装配的普通密码组件；不依赖业务应用
+     * component scan，也不要求 VMD 等消费方临时补 Bean（禁止新增临时
+     * {@code TransitDerivedKeyAssemblyConfig} 或自行 {@code new CertificatePublicKeyWrapper()}）。
+     * {@code @ConditionalOnMissingBean} 允许经批准的消费方提供等价实现——默认 Bean 正确退让，
+     * 默认安全行为仍由 FW-SEC 完整交付。
+     */
+    @Bean
+    @ConditionalOnMissingBean(CertificatePublicKeyWrapper.class)
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider",
+            havingValue = "openbao-transit-local-wrap")
+    public CertificatePublicKeyWrapper certificatePublicKeyWrapper() {
+        return new CertificatePublicKeyWrapper();
+    }
+
+    /**
      * Transit 专用客户端（FW-SEC-DSN-CR-019 §5.2）：仅 local-wrap 时装配；无 body 日志 HTTP Client。
+     * <p>
+     * 以 {@code @ConditionalOnProperty} 静态选择 local-wrap（RD-019-7/§12），
+     * 不再在方法体内 {@code return null} 表达“非 local-wrap 不装配”。
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider",
+            havingValue = "openbao-transit-local-wrap")
     public TransitHmacClient transitHmacClient(CryptoProperties properties,
                                                ObjectProvider<OpenBaoTokenProvider> tokenProviderProvider) {
-        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
-                properties.getProvisioning().getDerivedKey().getProvider())) {
-            return null;
-        }
         if (!isNotBlank(properties.getKms().getEndpoint())) {
             throw new IllegalStateException(
                     "openbao-transit-local-wrap 需要配置 crypto.kms.endpoint");
@@ -320,20 +338,16 @@ public class CryptoAutoConfiguration {
 
     /**
      * Transit 根元数据缓存（rootKeyVersion 稳定性窗口，FW-SEC-DSN-CR-019 §10/§11）。
+     * <p>
+     * 与 Transit 客户端同为 local-wrap 装配；通过 Bean 依赖保证装配顺序。
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider",
+            havingValue = "openbao-transit-local-wrap")
     public TransitRootMetadataCache transitRootMetadataCache(CryptoProperties properties,
-                                                             ObjectProvider<TransitHmacClient> transitClientProvider) {
-        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
-                properties.getProvisioning().getDerivedKey().getProvider())) {
-            return null;
-        }
-        TransitHmacClient client = transitClientProvider.getIfAvailable();
-        if (client == null) {
-            return null;
-        }
-        return new TransitRootMetadataCache(client,
+                                                             TransitHmacClient transitClient) {
+        return new TransitRootMetadataCache(transitClient,
                 properties.getKms().getTransit().getRootMetadataTtl());
     }
 
@@ -356,30 +370,31 @@ public class CryptoAutoConfiguration {
 
     /**
      * TransitDerivedKey 聚合 readiness（FW-SEC-DSN-CR-019 §10）。
+     * <p>
+     * 装配顺序由 AutoConfiguration Bean 依赖保证（RD-019-9/10）：
+     * {@link CertificatePublicKeyWrapper} 为直接 Bean 依赖，缺失时在启动阶段明确失败，
+     * 不以 {@code ObjectProvider.getIfAvailable()==null} 作为正常兼容路径；
+     * token/transit/registry/cache 缺失时以稳定 reason fail-closed。
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider",
+            havingValue = "openbao-transit-local-wrap")
     public TransitDerivedKeyReadiness transitDerivedKeyReadiness(
             CryptoProperties properties,
             ObjectProvider<OpenBaoTokenProvider> tokenProviderProvider,
             ObjectProvider<TransitHmacClient> transitClientProvider,
-            ObjectProvider<CertificatePublicKeyWrapper> wrapperProvider,
+            CertificatePublicKeyWrapper wrapper,
             ObjectProvider<DerivedKeyPolicyRegistry> registryProvider,
             ObjectProvider<TransitRootMetadataCache> cacheProvider,
             ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
-        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
-                properties.getProvisioning().getDerivedKey().getProvider())) {
-            return null;
-        }
         OpenBaoTokenProvider tokenProvider = tokenProviderProvider.getIfAvailable();
         TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
-        CertificatePublicKeyWrapper wrapper = wrapperProvider.getIfAvailable();
         DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
         TransitRootMetadataCache cache = cacheProvider.getIfAvailable();
-        if (tokenProvider == null || transitClient == null || wrapper == null
-                || registry == null || cache == null) {
+        if (tokenProvider == null || transitClient == null || registry == null || cache == null) {
             throw new IllegalStateException(
-                    "openbao-transit-local-wrap 组件装配不完整（token/transit/wrapper/registry/cache）");
+                    "openbao-transit-local-wrap 组件装配不完整（token/transit/registry/cache）");
         }
         TransitDerivedKeyReadiness readiness = new TransitDerivedKeyReadiness(properties,
                 tokenProvider, transitClient, wrapper, registry, cache, tboxValidatorProvider);
@@ -391,30 +406,29 @@ public class CryptoAutoConfiguration {
 
     /**
      * TransitDerivedKeyProvider（FW-SEC-DSN-CR-019 §5.3）。
+     * <p>
+     * {@link CertificatePublicKeyWrapper} 与 {@link TransitDerivedKeyReadiness} 为直接 Bean 依赖
+     * （RD-019-9/10），装配顺序由 AutoConfiguration Bean 依赖保证；
+     * registry/transit/cache 缺失时以稳定 reason fail-closed。
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key", name = "provider",
+            havingValue = "openbao-transit-local-wrap")
     public TransitDerivedKeyProvider transitDerivedKeyProvider(
             CryptoProperties properties,
             ObjectProvider<DerivedKeyPolicyRegistry> registryProvider,
             ObjectProvider<TransitHmacClient> transitClientProvider,
-            ObjectProvider<CertificatePublicKeyWrapper> wrapperProvider,
+            CertificatePublicKeyWrapper wrapper,
             ObjectProvider<TransitRootMetadataCache> cacheProvider,
-            ObjectProvider<TransitDerivedKeyReadiness> readinessProvider,
+            TransitDerivedKeyReadiness readiness,
             ObjectProvider<Clock> clockProvider) {
-        if (!DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(
-                properties.getProvisioning().getDerivedKey().getProvider())) {
-            return null;
-        }
         DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
         TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
-        CertificatePublicKeyWrapper wrapper = wrapperProvider.getIfAvailable();
         TransitRootMetadataCache cache = cacheProvider.getIfAvailable();
-        TransitDerivedKeyReadiness readiness = readinessProvider.getIfAvailable();
-        if (registry == null || transitClient == null || wrapper == null
-                || cache == null || readiness == null) {
+        if (registry == null || transitClient == null || cache == null) {
             throw new IllegalStateException(
-                    "openbao-transit-local-wrap 组件装配不完整（registry/transit/wrapper/cache/readiness）");
+                    "openbao-transit-local-wrap 组件装配不完整（registry/transit/cache）");
         }
         return new TransitDerivedKeyProvider(registry, new DerivedKeyContextEncoder(),
                 transitClient, wrapper, cache, readiness, clockProvider.getIfAvailable());
