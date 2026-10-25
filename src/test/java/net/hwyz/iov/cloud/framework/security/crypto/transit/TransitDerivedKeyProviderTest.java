@@ -2,7 +2,9 @@ package net.hwyz.iov.cloud.framework.security.crypto.transit;
 
 import net.hwyz.iov.cloud.framework.security.crypto.client.OperationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.codec.CanonicalEncoding;
+import net.hwyz.iov.cloud.framework.security.crypto.codec.DerivedKeyEnvelopeCanonical;
 import net.hwyz.iov.cloud.framework.security.crypto.enrollment.TestPkiMaterial;
+import net.hwyz.iov.cloud.framework.security.crypto.exception.DerivedWrapIdempotencyConflictException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.TransitException;
 import net.hwyz.iov.cloud.framework.security.crypto.exception.TransitReason;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
@@ -10,6 +12,7 @@ import net.hwyz.iov.cloud.framework.security.crypto.model.DerivationContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKey;
 import net.hwyz.iov.cloud.framework.security.crypto.model.DerivedWrappedKeyEnvelopeV1;
 import net.hwyz.iov.cloud.framework.security.crypto.model.EcdhEsP256EnvelopeViewV1;
+import net.hwyz.iov.cloud.framework.security.crypto.model.EnvelopeAadContext;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyAnchor;
 import net.hwyz.iov.cloud.framework.security.crypto.model.KeyPurpose;
 import net.hwyz.iov.cloud.framework.security.crypto.model.WrappingSuite;
@@ -19,8 +22,12 @@ import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyCommand;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyContextEncoder;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyKcv;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicyRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoder;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.InMemoryOperationResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.ValidatedRecipientEvidence;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.ValidatedRecipientEvidenceFixtures;
+import net.hwyz.iov.cloud.framework.security.crypto.support.ParProtoKeyprovAadV1Encoder;
 import net.hwyz.iov.cloud.framework.security.crypto.support.ReferenceDerivedKeyUnwrapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +62,8 @@ class TransitDerivedKeyProviderTest {
             transitClient, Duration.ofMinutes(1));
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-21T00:00:00Z"), ZoneOffset.UTC);
     private TransitDerivedKeyProvider provider;
+    private InMemoryOperationResultStore resultStore;
+    private CountingEncoder countingEncoder;
     private TestPkiMaterial.Pki pki;
 
     @BeforeEach
@@ -63,6 +72,8 @@ class TransitDerivedKeyProviderTest {
         TransitDerivedKeyReadiness readiness = mock(TransitDerivedKeyReadiness.class);
         when(readiness.capability())
                 .thenReturn(DerivedKeyCapability.ready(TransitDerivedKeyProvider.PROVIDER_NAME));
+        countingEncoder = new CountingEncoder(new ParProtoKeyprovAadV1Encoder());
+        resultStore = new InMemoryOperationResultStore(clock);
         provider = new TransitDerivedKeyProvider(
                 new DerivedKeyPolicyRegistry(),
                 new DerivedKeyContextEncoder(),
@@ -70,7 +81,11 @@ class TransitDerivedKeyProviderTest {
                 new CertificatePublicKeyWrapper(),
                 metadataCache,
                 readiness,
-                clock);
+                clock,
+                EnvelopeAadEncoderRegistry.of(countingEncoder),
+                resultStore,
+                ParProtoKeyprovAadV1Encoder.PROFILE_ID,
+                Duration.ofDays(30));
         transitClient.fixedResult = new byte[32];
         for (int i = 0; i < 32; i++) {
             transitClient.fixedResult[i] = (byte) i;
@@ -78,8 +93,28 @@ class TransitDerivedKeyProviderTest {
     }
 
     private DerivedKeyCommand command(KeyPurpose purpose, ValidatedRecipientEvidence evidence) {
+        return command("op-1", purpose, evidence);
+    }
+
+    private DerivedKeyCommand command(String operationId, KeyPurpose purpose,
+                                      ValidatedRecipientEvidence evidence) {
         return new DerivedKeyCommand(BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), purpose, evidence,
-                DerivationContext.of("v1", 7L), new OperationContext("op-1", "idem-1"));
+                DerivationContext.of("v1", 7L), new OperationContext(operationId, "idem-" + operationId));
+    }
+
+    /**
+     * 构造未配置外部 AAD profile 的 legacy Provider（新 V2C ECDH-ES 必须 fail-closed）。
+     */
+    private TransitDerivedKeyProvider legacyProviderWithoutProfile(
+            TransitDerivedKeyReadiness readiness) {
+        return new TransitDerivedKeyProvider(
+                new DerivedKeyPolicyRegistry(),
+                new DerivedKeyContextEncoder(),
+                transitClient,
+                new CertificatePublicKeyWrapper(),
+                metadataCache,
+                readiness,
+                clock);
     }
 
     @Test
@@ -97,12 +132,113 @@ class TransitDerivedKeyProviderTest {
                 "Transit 输入必须为固定向量 context");
         // KCV = first_3(SHA-256(keyMaterial))
         assertArrayEquals(DerivedKeyKcv.first3Sha256(transitClient.fixedResult), result.kcv());
-        // 信封可由模拟 TBOX SEC/HSM 解封出同一派生材料（自描述）
-        byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrap(pki.leafKeyPair().getPrivate(),
-                toEnvelope(result));
+        // 信封可由模拟 TBOX SEC/HSM 解封出同一派生材料（自描述，外部 AAD profile 路径）
+        byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(pki.leafKeyPair().getPrivate(),
+                toEnvelope(result), "req-1", "V2C_COMM_ROOT");
         assertArrayEquals(transitClient.fixedResult, unwrapped);
         assertEquals(3, result.rootKeyVersion());
         assertNotNull(result.envelope());
+        // CR-020：结构化 view 必须携带 aadProfileId 与外部 canonical AAD（加密前注入）
+        EcdhEsP256EnvelopeViewV1 v = (EcdhEsP256EnvelopeViewV1) result.envelope();
+        assertEquals(ParProtoKeyprovAadV1Encoder.PROFILE_ID, v.aadProfileId());
+        assertArrayEquals(countingEncoder.lastEncoded, v.canonicalAad(),
+                "AAD 必须是 encoder 加密前输出，禁止加密后替换");
+        assertArrayEquals(CanonicalEncoding.sha256(v.canonicalAad()), v.aadDigest());
+    }
+
+    @Test
+    void deriveAndWrap_externalAadProfile_boundToEnvelopeAndUnwrap() throws Exception {
+        ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256EvidenceFrom(
+                pki, "cert-001", WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
+        DerivedWrappedKey result = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+
+        EcdhEsP256EnvelopeViewV1 v = (EcdhEsP256EnvelopeViewV1) result.envelope();
+        assertEquals(ParProtoKeyprovAadV1Encoder.PROFILE_ID, v.aadProfileId());
+        // 外部 AAD 参与 AES-GCM：解封必须使用同一 AAD 才能还原明文
+        byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(pki.leafKeyPair().getPrivate(),
+                toEnvelope(result), "req-1", "V2C_COMM_ROOT");
+        assertArrayEquals(transitClient.fixedResult, unwrapped);
+        // core digest 对含外部 AAD 的信封成立
+        assertTrue(CanonicalEncoding.constantTimeEquals(v.coreEnvelopeDigest(),
+                DerivedKeyEnvelopeCanonical.envelopeDigest(toEnvelope(result))));
+    }
+
+    @Test
+    void deriveAndWrap_replay_sameOperation_returnsOriginalBytesWithoutReEncoding() throws Exception {
+        ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256Evidence(
+                WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
+        DerivedWrappedKey first = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+        int hmacCallsAfterFirst = transitClient.hmacCalls;
+        int encoderCallsAfterFirst = countingEncoder.calls;
+
+        DerivedWrappedKey replay = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+
+        // 原字节重放：envelopeBytes / digest / KCV 完全一致
+        assertArrayEquals(first.envelopeBytes(), replay.envelopeBytes(),
+                "同 operation 重放必须返回原信封字节（FW-SEC-DSN-CR-020 §4）");
+        assertArrayEquals(first.envelopeDigest(), replay.envelopeDigest());
+        assertArrayEquals(first.kcv(), replay.kcv());
+        // 重放不得再次调用 encoder/随机源/Transit（测试 5）
+        assertEquals(hmacCallsAfterFirst, transitClient.hmacCalls,
+                "重放不得再次调用 Transit");
+        assertEquals(encoderCallsAfterFirst, countingEncoder.calls,
+                "重放不得再次调用 encoder（不重新编码）");
+    }
+
+    @Test
+    void deriveAndWrap_switchEncoderImplementation_originalBytesRetained() throws Exception {
+        ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256Evidence(
+                WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
+        DerivedWrappedKey first = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+
+        // 切换 encoder 实现（不同输出）：同 operation 重放仍返回原字节（结果存储重放）
+        TransitDerivedKeyReadiness readiness = mock(TransitDerivedKeyReadiness.class);
+        when(readiness.capability())
+                .thenReturn(DerivedKeyCapability.ready(TransitDerivedKeyProvider.PROVIDER_NAME));
+        TransitDerivedKeyProvider upgraded = new TransitDerivedKeyProvider(
+                new DerivedKeyPolicyRegistry(),
+                new DerivedKeyContextEncoder(),
+                transitClient,
+                new CertificatePublicKeyWrapper(),
+                metadataCache,
+                readiness,
+                clock,
+                EnvelopeAadEncoderRegistry.of(new DifferentOutputEncoder()),
+                resultStore,
+                ParProtoKeyprovAadV1Encoder.PROFILE_ID,
+                Duration.ofDays(30));
+
+        DerivedWrappedKey replay = upgraded.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+        assertArrayEquals(first.envelopeBytes(), replay.envelopeBytes(),
+                "升级 encoder 实现后原 operation 仍返回原字节（测试 6）");
+        assertEquals(ParProtoKeyprovAadV1Encoder.PROFILE_ID, replay.envelope().aadProfileId());
+    }
+
+    @Test
+    void deriveAndWrap_sameOperationDifferentDigest_conflict() throws Exception {
+        ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256Evidence(
+                WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
+        provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+
+        // 同 operationId 不同 purpose → 请求摘要（profile/hash）变化 → 幂等冲突
+        assertThrows(DerivedWrapIdempotencyConflictException.class,
+                () -> provider.deriveAndWrap(command(KeyPurpose.DOWNLINK_AEAD, evidence)));
+    }
+
+    @Test
+    void deriveAndWrap_profileMissing_failClosed() throws Exception {
+        ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256Evidence(
+                WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
+        TransitDerivedKeyReadiness readiness = mock(TransitDerivedKeyReadiness.class);
+        when(readiness.capability())
+                .thenReturn(DerivedKeyCapability.ready(TransitDerivedKeyProvider.PROVIDER_NAME));
+        TransitDerivedKeyProvider legacy = legacyProviderWithoutProfile(readiness);
+
+        TransitException ex = assertThrows(TransitException.class,
+                () -> legacy.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence)));
+        assertEquals(TransitReason.AAD_PROFILE_NOT_CONFIGURED, ex.transitReason(),
+                "新 V2C ECDH-ES 未配置 aadProfileId 必须 fail-closed（CR-020 §6 收紧）");
+        assertEquals(0, transitClient.hmacCalls, "未配置 profile 时不得调用 Transit");
     }
 
     @Test
@@ -121,12 +257,12 @@ class TransitDerivedKeyProviderTest {
         transitClient.deterministicFromInput = true;
         ValidatedRecipientEvidence evidence = ValidatedRecipientEvidenceFixtures.p256Evidence(
                 WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
-        DerivedWrappedKey up = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, evidence));
+        DerivedWrappedKey up = provider.deriveAndWrap(command("op-1", KeyPurpose.UPLINK_AEAD, evidence));
         assertArrayEquals(("openiov|v2c|v1|" + VIN + "|UPLINK_AEAD")
                         .getBytes(StandardCharsets.UTF_8), transitClient.lastHmacInput(),
                 "UPLINK context 固定向量");
 
-        DerivedWrappedKey down = provider.deriveAndWrap(command(KeyPurpose.DOWNLINK_AEAD, evidence));
+        DerivedWrappedKey down = provider.deriveAndWrap(command("op-2", KeyPurpose.DOWNLINK_AEAD, evidence));
         assertArrayEquals(("openiov|v2c|v1|" + VIN + "|DOWNLINK_AEAD")
                         .getBytes(StandardCharsets.UTF_8), transitClient.lastHmacInput(),
                 "DOWNLINK context 固定向量");
@@ -148,8 +284,8 @@ class TransitDerivedKeyProviderTest {
                 e1.validatedAt(), e1.validUntil(),
                 ValidatedRecipientEvidence.RecipientStatus.GOOD, "d2", "req-2");
 
-        DerivedWrappedKey r1 = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, e1));
-        DerivedWrappedKey r2 = provider.deriveAndWrap(command(KeyPurpose.UPLINK_AEAD, e2));
+        DerivedWrappedKey r1 = provider.deriveAndWrap(command("op-1", KeyPurpose.UPLINK_AEAD, e1));
+        DerivedWrappedKey r2 = provider.deriveAndWrap(command("op-2", KeyPurpose.UPLINK_AEAD, e2));
 
         // 换件/换证书：逻辑密钥与 KCV 不变，Wrapped Key 变化（随机化封装）
         assertArrayEquals(r1.kcv(), r2.kcv());
@@ -246,6 +382,48 @@ class TransitDerivedKeyProviderTest {
                 CanonicalEncoding.hexLower(v.recipientCertificateDigest()),
                 v.logicalKeyId(), v.purpose(), v.businessKeyVersion(), v.rootKeyVersion(),
                 v.derivationVersion(), v.keyCheckValue(), v.operationId(), v.envelopeDigest());
+    }
+
+    /**
+     * 计数 encoder：记录调用次数与最后输出（验证重放不再次调用）。
+     */
+    static final class CountingEncoder implements EnvelopeAadEncoder {
+        private final EnvelopeAadEncoder delegate;
+        int calls;
+        byte[] lastEncoded;
+
+        CountingEncoder(EnvelopeAadEncoder delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public String profileId() {
+            return delegate.profileId();
+        }
+
+        @Override
+        public byte[] encode(EnvelopeAadContext context) {
+            calls++;
+            lastEncoded = delegate.encode(context);
+            return lastEncoded.clone();
+        }
+    }
+
+    /**
+     * 切换实现测试用 encoder：profile 相同但输出不同（确定性）。
+     */
+    static final class DifferentOutputEncoder extends ParProtoKeyprovAadV1Encoder {
+        @Override
+        public byte[] encode(EnvelopeAadContext context) {
+            byte[] base = super.encode(context);
+            byte[] out = new byte[base.length + 4];
+            out[0] = 0x01;
+            out[1] = 0x02;
+            out[2] = 0x03;
+            out[3] = 0x04;
+            System.arraycopy(base, 0, out, 4, base.length);
+            return out;
+        }
     }
 
     /**

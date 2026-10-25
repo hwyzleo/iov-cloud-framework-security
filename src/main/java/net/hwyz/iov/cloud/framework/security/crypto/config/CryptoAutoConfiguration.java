@@ -33,7 +33,11 @@ import net.hwyz.iov.cloud.framework.security.crypto.provider.CertificatePublicKe
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyContextEncoder;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicyRegistry;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyProviderRouter;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoder;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.InMemoryOperationResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.KmsDerivedKeyProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.OperationResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.transit.HttpTransitHmacClient;
 import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyHealthIndicator;
 import net.hwyz.iov.cloud.framework.security.crypto.transit.TransitDerivedKeyProvider;
@@ -387,7 +391,9 @@ public class CryptoAutoConfiguration {
             CertificatePublicKeyWrapper wrapper,
             ObjectProvider<DerivedKeyPolicyRegistry> registryProvider,
             ObjectProvider<TransitRootMetadataCache> cacheProvider,
-            ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider) {
+            ObjectProvider<TboxDeviceCertificateValidator> tboxValidatorProvider,
+            ObjectProvider<EnvelopeAadEncoderRegistry> aadRegistryProvider,
+            ObjectProvider<OperationResultStore> resultStoreProvider) {
         OpenBaoTokenProvider tokenProvider = tokenProviderProvider.getIfAvailable();
         TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
         DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
@@ -397,7 +403,8 @@ public class CryptoAutoConfiguration {
                     "openbao-transit-local-wrap 组件装配不完整（token/transit/registry/cache）");
         }
         TransitDerivedKeyReadiness readiness = new TransitDerivedKeyReadiness(properties,
-                tokenProvider, transitClient, wrapper, registry, cache, tboxValidatorProvider);
+                tokenProvider, transitClient, wrapper, registry, cache, tboxValidatorProvider,
+                aadRegistryProvider.getIfAvailable(), resultStoreProvider.getIfAvailable());
         if (properties.getProvisioning().getDerivedKey().isRequireReadyAtStartup()) {
             readiness.verifyAtStartup();
         }
@@ -422,7 +429,9 @@ public class CryptoAutoConfiguration {
             CertificatePublicKeyWrapper wrapper,
             ObjectProvider<TransitRootMetadataCache> cacheProvider,
             TransitDerivedKeyReadiness readiness,
-            ObjectProvider<Clock> clockProvider) {
+            ObjectProvider<Clock> clockProvider,
+            ObjectProvider<EnvelopeAadEncoderRegistry> aadRegistryProvider,
+            ObjectProvider<OperationResultStore> resultStoreProvider) {
         DerivedKeyPolicyRegistry registry = registryProvider.getIfAvailable();
         TransitHmacClient transitClient = transitClientProvider.getIfAvailable();
         TransitRootMetadataCache cache = cacheProvider.getIfAvailable();
@@ -430,8 +439,41 @@ public class CryptoAutoConfiguration {
             throw new IllegalStateException(
                     "openbao-transit-local-wrap 组件装配不完整（registry/transit/cache）");
         }
+        String aadProfileId = properties.getProvisioning().getDerivedKey().getAadProfileId();
+        OperationResultStore resultStore = resultStoreProvider.getIfAvailable();
+        if (aadProfileId != null && !aadProfileId.isBlank() && resultStore == null) {
+            throw new IllegalStateException(
+                    "已配置 aad-profile-id 但 OperationResultStore 未装配"
+                            + "（字节级幂等重放必需，FW-SEC-DSN-CR-020 §4）");
+        }
         return new TransitDerivedKeyProvider(registry, new DerivedKeyContextEncoder(),
-                transitClient, wrapper, cache, readiness, clockProvider.getIfAvailable());
+                transitClient, wrapper, cache, readiness, clockProvider.getIfAvailable(),
+                aadRegistryProvider.getIfAvailable(), resultStore, aadProfileId,
+                properties.getProvisioning().getDerivedKey().getResultStore().getTtl());
+    }
+
+    /**
+     * AAD Encoder 受控注册表（FW-SEC-DSN-CR-020 §2）：收集 VMD 注册的
+     * {@link EnvelopeAadEncoder} bean，启动期冻结（拒绝重复/非法 profile、非确定性输出）。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public EnvelopeAadEncoderRegistry envelopeAadEncoderRegistry(
+            java.util.List<EnvelopeAadEncoder> encoders) {
+        return new EnvelopeAadEncoderRegistry(encoders);
+    }
+
+    /**
+     * Operation 结果存储（FW-SEC-DSN-CR-020 §4）：默认 InMemory（dev/test/联调）；
+     * 生产必须由消费方提供共享、持久化、原子写入的实现（@ConditionalOnMissingBean 退让），
+     * 否则 EXTERNAL_AAD_PROFILE_V1 保持 DOWN。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "crypto.provisioning.derived-key.result-store", name = "enabled",
+            havingValue = "true", matchIfMissing = true)
+    public OperationResultStore operationResultStore() {
+        return new InMemoryOperationResultStore();
     }
 
     /**

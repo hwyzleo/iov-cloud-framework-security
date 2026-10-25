@@ -23,7 +23,7 @@ public final class DerivedEnvelopeViewFactory {
     }
 
     /**
-     * 将 canonical ECDH-ES v1 信封投影为结构化视图。
+     * 将 canonical ECDH-ES v1 信封投影为结构化视图（旧格式读取路径，{@code aadProfileId = null}）。
      *
      * @param envelope canonical 信封（非空，且套件必须为 ECDH-ES）
      * @return 结构化视图
@@ -31,6 +31,22 @@ public final class DerivedEnvelopeViewFactory {
      * @throws IllegalArgumentException 套件非 ECDH-ES，或证书指纹缺失/非法，或字段长度不合法
      */
     public static EcdhEsP256EnvelopeViewV1 toEcdhEsP256View(DerivedWrappedKeyEnvelopeV1 envelope) {
+        return toEcdhEsP256View(envelope, null);
+    }
+
+    /**
+     * 将 canonical ECDH-ES v1 信封投影为结构化视图（FW-SEC-DSN-CR-020 §2）。
+     * <p>
+     * 新 V2C 结果必须携带非空 {@code aadProfileId}；无 profile 的旧格式只允许原格式对账/终结。
+     *
+     * @param envelope      canonical 信封（非空，且套件必须为 ECDH-ES）
+     * @param aadProfileId  使用的 AAD profile 标识（null = 无 profile 旧格式）
+     * @return 结构化视图
+     * @throws NullPointerException     信封为 null
+     * @throws IllegalArgumentException 套件非 ECDH-ES，或证书指纹缺失/非法，或字段长度不合法
+     */
+    public static EcdhEsP256EnvelopeViewV1 toEcdhEsP256View(DerivedWrappedKeyEnvelopeV1 envelope,
+                                                             String aadProfileId) {
         Objects.requireNonNull(envelope, "envelope must not be null");
         if (envelope.wrappingSuite() == null || !envelope.wrappingSuite().isEcdh()) {
             throw new IllegalArgumentException(
@@ -55,7 +71,8 @@ public final class DerivedEnvelopeViewFactory {
                 envelope.derivationVersion(),
                 envelope.operationId(),
                 envelope.envelopeDigest(),
-                envelope.kcv());
+                envelope.kcv(),
+                aadProfileId);
     }
 
     /**

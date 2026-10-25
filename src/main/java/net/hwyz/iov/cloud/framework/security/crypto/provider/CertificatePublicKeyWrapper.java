@@ -68,7 +68,11 @@ public class CertificatePublicKeyWrapper {
     }
 
     /**
-     * 用已验证收方证书公钥封装派生材料并构建 CR-014/015 canonical 信封。
+     * 用已验证收方证书公钥封装派生材料并构建 CR-014/015 canonical 信封
+     * （legacy 内部 core AAD 路径，FW-SEC-DSN-CR-020 §6：无 profile 旧格式/明确 legacy consumer）。
+     * <p>
+     * ECDH-ES 使用 {@link EnvelopeAadV1} 的 framework core canonical AAD；
+     * RSA-OAEP 无 AAD 概念。新 V2C 操作必须使用 {@link #wrapWithAad}（外部 profile AAD）。
      *
      * @param keyMaterial 派生材料（32 字节，有界内存）
      * @param recipient   已验证收方证据（SPKI/指纹/套件）
@@ -85,10 +89,69 @@ public class CertificatePublicKeyWrapper {
             throw TransitException.wrapUnavailable("validatedWrapSuite is null", null);
         }
         switch (suite) {
-            case ECDH_ES_P256_HKDF_SHA256_AES256GCM:
-                return wrapEcdh(keyMaterial, recipient, context);
+            case ECDH_ES_P256_HKDF_SHA256_AES256GCM: {
+                byte[] coreAad = DerivedKeyEnvelopeCanonical.aadBytes(new EnvelopeAadV1(
+                        DerivedWrappedKeyEnvelopeV1.V1,
+                        WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM,
+                        context.requestId(),
+                        context.businessDomain(),
+                        context.purpose(),
+                        context.logicalKeyId(),
+                        context.businessKeyVersion(),
+                        context.rootKeyVersion(),
+                        context.derivationVersion(),
+                        context.recipientCertificateFingerprint()));
+                return wrapEcdh(keyMaterial, recipient, context, coreAad);
+            }
             case RSA_OAEP_SHA256:
                 return wrapRsa(keyMaterial, recipient, context);
+            default:
+                throw TransitException.wrapUnavailable(
+                        "unsupported wrapping suite: " + suite, null);
+        }
+    }
+
+    /**
+     * 用已验证收方证书公钥封装派生材料并构建 canonical 信封，<strong>加密前注入外部 canonical AAD</strong>
+     * （FW-SEC-DSN-CR-020 §3）。
+     * <p>
+     * 由 {@code EnvelopeAadEncoder} 在 AES-256-GCM 之前输出的 AAD 字节直接用于
+     * {@code cipher.updateAAD(aad)} 并原样写入信封 {@code aad} 字段：<strong>禁止加密后替换 AAD</strong>
+     * 或重算 tag。{@code aadDigest = SHA-256(canonicalAad)}。仅支持 ECDH-ES 套件
+     * （RSA-OAEP 无 AAD 概念，走 {@link #wrap}）。
+     *
+     * @param keyMaterial 派生材料（32 字节，有界内存）
+     * @param recipient   已验证收方证据（SPKI/指纹/套件）
+     * @param context     信封上下文（逻辑引用/版本/操作）
+     * @param canonicalAad 外部 profile 生成的 canonical AAD（非空，≤ 1 KiB）
+     * @return canonical 信封（含 envelopeDigest）
+     */
+    public DerivedWrappedKeyEnvelopeV1 wrapWithAad(byte[] keyMaterial, ValidatedRecipientEvidence recipient,
+                                                   WrapEnvelopeContext context, byte[] canonicalAad) {
+        Objects.requireNonNull(keyMaterial, "keyMaterial must not be null");
+        Objects.requireNonNull(recipient, "recipient must not be null");
+        Objects.requireNonNull(context, "context must not be null");
+        Objects.requireNonNull(canonicalAad, "canonicalAad must not be null（加密前注入，禁止替换）");
+        if (canonicalAad.length == 0) {
+            throw TransitException.wrapUnavailable("canonicalAad must not be empty", null);
+        }
+        if (canonicalAad.length > net.hwyz.iov.cloud.framework.security.crypto.model
+                .EcdhEsP256EnvelopeViewV1.MAX_CANONICAL_AAD_LENGTH) {
+            throw TransitException.wrapUnavailable(
+                    "canonicalAad exceeds max "
+                            + net.hwyz.iov.cloud.framework.security.crypto.model
+                            .EcdhEsP256EnvelopeViewV1.MAX_CANONICAL_AAD_LENGTH + " bytes", null);
+        }
+        WrappingSuite suite = recipient.validatedWrapSuite();
+        if (suite == null) {
+            throw TransitException.wrapUnavailable("validatedWrapSuite is null", null);
+        }
+        switch (suite) {
+            case ECDH_ES_P256_HKDF_SHA256_AES256GCM:
+                return wrapEcdh(keyMaterial, recipient, context, canonicalAad.clone());
+            case RSA_OAEP_SHA256:
+                throw TransitException.wrapUnavailable(
+                        "wrapWithAad 仅支持 ECDH-ES（RSA-OAEP 无 AAD 概念，走 wrap）", null);
             default:
                 throw TransitException.wrapUnavailable(
                         "unsupported wrapping suite: " + suite, null);
@@ -98,7 +161,7 @@ public class CertificatePublicKeyWrapper {
     // ==================== ECDH-ES P-256 ====================
 
     private DerivedWrappedKeyEnvelopeV1 wrapEcdh(byte[] keyMaterial, ValidatedRecipientEvidence recipient,
-                                                 WrapEnvelopeContext context) {
+                                                 WrapEnvelopeContext context, byte[] aad) {
         byte[] shared = null;
         byte[] kek = null;
         try {
@@ -122,17 +185,7 @@ public class CertificatePublicKeyWrapper {
                     .getBytes(StandardCharsets.UTF_8);
             kek = SessionKdf.deriveSessionKey(shared, salt, info);
 
-            byte[] aad = DerivedKeyEnvelopeCanonical.aadBytes(new EnvelopeAadV1(
-                    DerivedWrappedKeyEnvelopeV1.V1,
-                    WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM,
-                    context.requestId(),
-                    context.businessDomain(),
-                    context.purpose(),
-                    context.logicalKeyId(),
-                    context.businessKeyVersion(),
-                    context.rootKeyVersion(),
-                    context.derivationVersion(),
-                    context.recipientCertificateFingerprint()));
+            // CR-020 §3：AAD 在加密前固定（外部 profile 或 legacy core AAD），加密后禁止替换
             byte[] aadDigest = CanonicalEncoding.sha256(aad);
 
             byte[] nonce = new byte[GCM_NONCE_BYTES];

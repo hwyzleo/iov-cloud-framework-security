@@ -61,7 +61,30 @@ public enum TransitReason {
     /**
      * Transit HMAC 响应格式非法（版本前缀未知、Base64 非法）。
      */
-    DERIVED_KEY_FORMAT_INVALID("DERIVED_KEY_FORMAT_INVALID", false);
+    DERIVED_KEY_FORMAT_INVALID("DERIVED_KEY_FORMAT_INVALID", false),
+
+    /**
+     * 新 V2C ECDH-ES keyprov 未配置 aadProfileId（FW-SEC-DSN-CR-020 §6 收紧）：
+     * 不得为新的 V2C operation 静默生成旧 core AAD 信封。
+     */
+    AAD_PROFILE_NOT_CONFIGURED("AAD_PROFILE_NOT_CONFIGURED", false),
+
+    /**
+     * 配置的 aadProfileId 未在受控 registry 注册（FW-SEC-DSN-CR-020 §2）：
+     * 不得回退旧 FW AAD 或空 AAD；启动/readiness 必须失败。
+     */
+    AAD_PROFILE_UNAVAILABLE("AAD_PROFILE_UNAVAILABLE", false),
+
+    /**
+     * AAD encoder 输出非法（非确定/超限/抛错，FW-SEC-DSN-CR-020 §7 测试 3）。
+     */
+    AAD_ENCODER_OUTPUT_INVALID("AAD_ENCODER_OUTPUT_INVALID", false),
+
+    /**
+     * Operation Result Store 不可用（读写/对账失败）：capability DOWN，
+     * 不得退回重新生成新信封（FW-SEC-DSN-CR-014 §6；CR-020 §4）。
+     */
+    RESULT_STORE_UNAVAILABLE("RESULT_STORE_UNAVAILABLE", true);
 
     private final String wireName;
     private final boolean retryable;

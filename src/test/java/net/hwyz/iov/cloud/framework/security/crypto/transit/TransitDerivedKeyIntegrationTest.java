@@ -72,6 +72,11 @@ class TransitDerivedKeyIntegrationTest {
         CryptoProperties properties = new CryptoProperties();
         properties.getProvisioning().setEnabled(true);
         properties.getProvisioning().getDerivedKey().setProvider("openbao-transit-local-wrap");
+        // CR-020：新 V2C ECDH-ES 必须配置外部 AAD profile
+        properties.getProvisioning().getDerivedKey().setAadProfileId(
+                net.hwyz.iov.cloud.framework.security.crypto.support
+                        .ParProtoKeyprovAadV1Encoder.PROFILE_ID);
+        properties.getProvisioning().getDerivedKey().getResultStore().setAllowInMemory(true);
         CryptoProperties.Provisioning.DerivedKey.RootPolicy root =
                 new CryptoProperties.Provisioning.DerivedKey.RootPolicy();
         root.setTransitKey("v2c-comm-root");
@@ -96,7 +101,16 @@ class TransitDerivedKeyIntegrationTest {
         TransitDerivedKeyProvider provider = new TransitDerivedKeyProvider(
                 new DerivedKeyPolicyRegistry(), new DerivedKeyContextEncoder(), transitClient,
                 new CertificatePublicKeyWrapper(), metadataCache, readiness,
-                Clock.fixed(Instant.parse("2026-10-21T00:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-10-21T00:00:00Z"), ZoneOffset.UTC),
+                net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry.of(
+                        new net.hwyz.iov.cloud.framework.security.crypto.support
+                                .ParProtoKeyprovAadV1Encoder()),
+                new net.hwyz.iov.cloud.framework.security.crypto.provider
+                        .InMemoryOperationResultStore(
+                                Clock.fixed(Instant.parse("2026-10-21T00:00:00Z"), ZoneOffset.UTC)),
+                net.hwyz.iov.cloud.framework.security.crypto.support
+                        .ParProtoKeyprovAadV1Encoder.PROFILE_ID,
+                Duration.ofDays(30));
         DerivedKeyProviderRouter router = new DerivedKeyProviderRouter(
                 DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER, provider, null);
 
@@ -159,8 +173,10 @@ class TransitDerivedKeyIntegrationTest {
                 KeyPurpose.DOWNLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
                 DerivationContext.of("v1", 7L), "op-2", "idem-2");
         byte[] keyMaterial = CanonicalEncoding.sha256(transitClient.lastInput);
-        byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrap(pki.leafKeyPair().getPrivate(),
-                toEnvelope(result));
+        // 外部 AAD profile 路径：KDF info 由信封元数据 + 外部上下文构造（协议无关）
+        // 门面证据 requestId 为空（RecipientRef.DeviceCertificate 单参构造）→ kdfInfo 按空串处理
+        byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(
+                pki.leafKeyPair().getPrivate(), toEnvelope(result), null, "V2C_COMM_ROOT");
         assertArrayEquals(keyMaterial, unwrapped);
     }
 

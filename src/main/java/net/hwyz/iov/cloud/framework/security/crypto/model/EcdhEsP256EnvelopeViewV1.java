@@ -40,6 +40,7 @@ import java.util.Objects;
  * @param operationId                    操作标识（对账主键）
  * @param envelopeDigest                 信封摘要（SHA-256，32 字节）
  * @param keyCheckValue                  密钥校验值（3 字节）
+ * @param aadProfileId                  使用的 AAD profile 标识（CR-020；null = 无 profile 旧格式/legacy core AAD）
  */
 public record EcdhEsP256EnvelopeViewV1(
         int formatVersion,
@@ -60,7 +61,8 @@ public record EcdhEsP256EnvelopeViewV1(
         String derivationVersion,
         String operationId,
         byte[] envelopeDigest,
-        byte[] keyCheckValue) implements DerivedWrappedKeyEnvelopeView, java.io.Serializable {
+        byte[] keyCheckValue,
+        String aadProfileId) implements DerivedWrappedKeyEnvelopeView, java.io.Serializable {
 
     /** 受治理信封格式标识（对应 PAR-PROTO {@code KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1}）。 */
     public static final String ENVELOPE_FORMAT = "ECDH_ES_P256_V1";
@@ -126,6 +128,41 @@ public record EcdhEsP256EnvelopeViewV1(
                 "recipientCertificateDigest");
         envelopeDigest = requireFixedLength(envelopeDigest, DIGEST_LENGTH, "envelopeDigest");
         keyCheckValue = requireFixedLength(keyCheckValue, KEY_CHECK_VALUE_LENGTH, "keyCheckValue");
+        if (aadProfileId != null && aadProfileId.isBlank()) {
+            throw new IllegalArgumentException("aadProfileId must not be blank when present");
+        }
+    }
+
+    /**
+     * 兼容构造（CR-020 §6 additive）：不携带 aadProfileId 的旧格式视图（{@code aadProfileId = null}）。
+     * <p>
+     * 保留旧 19 参构造的 JVM descriptor，使既有消费者（framework/VMD/VAGW/TSP）二进制与源码兼容；
+     * 新 V2C 结果必须通过带 aadProfileId 的 canonical 构造构建。
+     */
+    public EcdhEsP256EnvelopeViewV1(
+            int formatVersion,
+            WrappingSuite wrappingSuite,
+            byte[] serverEphemeralPublicKey,
+            byte[] hkdfSalt,
+            String hkdfContextVersion,
+            byte[] nonce,
+            byte[] ciphertext,
+            byte[] authenticationTag,
+            byte[] canonicalAad,
+            byte[] aadDigest,
+            byte[] recipientCertificateDigest,
+            String logicalKeyId,
+            KeyPurpose purpose,
+            long businessKeyVersion,
+            long rootKeyVersion,
+            String derivationVersion,
+            String operationId,
+            byte[] envelopeDigest,
+            byte[] keyCheckValue) {
+        this(formatVersion, wrappingSuite, serverEphemeralPublicKey, hkdfSalt, hkdfContextVersion,
+                nonce, ciphertext, authenticationTag, canonicalAad, aadDigest, recipientCertificateDigest,
+                logicalKeyId, purpose, businessKeyVersion, rootKeyVersion, derivationVersion,
+                operationId, envelopeDigest, keyCheckValue, null);
     }
 
     @Override
@@ -174,8 +211,20 @@ public record EcdhEsP256EnvelopeViewV1(
     }
 
     @Override
+    @Deprecated
     public byte[] envelopeDigest() {
+        // CR-020 §6：兼容期保留，委托 core 值；新 V2C Adapter 必须使用 coreEnvelopeDigest()
         return envelopeDigest.clone();
+    }
+
+    @Override
+    public byte[] coreEnvelopeDigest() {
+        return envelopeDigest.clone();
+    }
+
+    @Override
+    public String aadProfileId() {
+        return aadProfileId;
     }
 
     @Override
@@ -244,6 +293,7 @@ public record EcdhEsP256EnvelopeViewV1(
                 + ", rootKeyVersion=" + rootKeyVersion
                 + ", derivationVersion='" + derivationVersion + "'"
                 + ", operationId='" + operationId + "'"
+                + ", aadProfileId=" + (aadProfileId == null ? "null" : "'" + aadProfileId + "'")
                 + ", serverEphemeralPublicKey=" + lengthOf(serverEphemeralPublicKey)
                 + ", hkdfSalt=" + lengthOf(hkdfSalt)
                 + ", nonce=" + lengthOf(nonce)

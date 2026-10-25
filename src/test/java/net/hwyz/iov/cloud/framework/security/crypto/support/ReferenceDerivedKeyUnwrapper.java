@@ -27,11 +27,33 @@ public final class ReferenceDerivedKeyUnwrapper {
 
     /**
      * 解封并校验 AAD digest / envelope digest / AEAD tag / KCV，返回业务密钥明文。
+     * <p>旧格式（core EnvelopeAadV1）路径：从 canonical AAD 解析 KDF info 字段。</p>
      *
      * @throws IllegalStateException 任一完整性校验失败（视为不可导入）
      */
     public static byte[] unwrap(PrivateKey recipientPrivateKey, DerivedWrappedKeyEnvelopeV1 envelope)
             throws Exception {
+        String[] fields = decodeAadFields(envelope.aad());
+        return unwrapWithInfo(recipientPrivateKey, envelope,
+                fields[2],   // requestId
+                fields[3]);  // businessDomain
+    }
+
+    /**
+     * 解封并校验（FW-SEC-DSN-CR-020：外部 AAD profile 路径）。
+     * <p>KDF info 由信封元数据 + 外部上下文构造（requestId/businessDomain），AAD 仅作为
+     * AEAD 附加认证数据参与 tag 校验；不解析 profile AAD 内容（协议无关）。</p>
+     *
+     * @param recipientPrivateKey 收方私钥
+     * @param envelope            canonical 信封（含外部 profile AAD）
+     * @param requestId           证书 enrollment 请求标识
+     * @param businessDomain      业务域
+     * @return 业务密钥明文
+     * @throws IllegalStateException 任一完整性校验失败（视为不可导入）
+     */
+    public static byte[] unwrapWithInfo(PrivateKey recipientPrivateKey,
+                                        DerivedWrappedKeyEnvelopeV1 envelope,
+                                        String requestId, String businessDomain) throws Exception {
         byte[] aad = envelope.aad();
         if (aad == null || !CanonicalEncoding.constantTimeEquals(envelope.aadDigest(),
                 CanonicalEncoding.sha256(aad))) {
@@ -41,16 +63,9 @@ public final class ReferenceDerivedKeyUnwrapper {
             throw new IllegalStateException("envelope digest mismatch: envelope rejected");
         }
 
-        String[] fields = decodeAadFields(aad);
-        String requestId = fields[2];
-        String businessDomain = fields[3];
-        String purpose = fields[4];
-        String keyId = fields[5];
-        long businessKeyVersion = Long.parseLong(fields[6]);
-        String fingerprint = fields[9];
         String info = DerivedKeyEnvelopeCanonical.kdfInfo(requestId, businessDomain,
-                purpose == null || purpose.isEmpty() ? null : KeyPurpose.valueOf(purpose),
-                keyId, businessKeyVersion, fingerprint);
+                envelope.purpose(), envelope.logicalKeyId(), envelope.businessKeyVersion(),
+                envelope.recipientCertificateFingerprint());
 
         ECPublicKey ephemeral = EcdhP256.decodeUncompressed(envelope.serverEphemeralPublicKey());
         byte[] shared = EcdhP256.ecdh(recipientPrivateKey, ephemeral);

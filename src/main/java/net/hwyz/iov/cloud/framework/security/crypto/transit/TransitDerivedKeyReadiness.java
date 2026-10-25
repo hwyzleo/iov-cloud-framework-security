@@ -1,5 +1,7 @@
 package net.hwyz.iov.cloud.framework.security.crypto.transit;
 
+import net.hwyz.iov.cloud.framework.security.crypto.DerivedEnvelopeCapability;
+import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
 import net.hwyz.iov.cloud.framework.security.crypto.auth.KmsAuthScope;
 import net.hwyz.iov.cloud.framework.security.crypto.auth.OpenBaoTokenProvider;
 import net.hwyz.iov.cloud.framework.security.crypto.client.OperationContext;
@@ -10,8 +12,9 @@ import net.hwyz.iov.cloud.framework.security.crypto.provider.CertificatePublicKe
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyCapability;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicy;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicyRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.OperationResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.model.BizType;
-import net.hwyz.iov.cloud.framework.security.crypto.TboxDeviceCertificateValidator;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.charset.StandardCharsets;
@@ -49,7 +52,12 @@ public class TransitDerivedKeyReadiness {
     private final DerivedKeyPolicyRegistry policyRegistry;
     private final TransitRootMetadataCache rootMetadataCache;
     private final ObjectProvider<TboxDeviceCertificateValidator> certValidatorProvider;
+    private final EnvelopeAadEncoderRegistry aadEncoderRegistry;
+    private final OperationResultStore resultStore;
 
+    /**
+     * 兼容构造（legacy）：不携带 AAD registry / 结果存储；未配置 profile 时 AAD 维度 DOWN。
+     */
     public TransitDerivedKeyReadiness(CryptoProperties properties,
                                       OpenBaoTokenProvider tokenProvider,
                                       TransitHmacClient transitHmacClient,
@@ -57,6 +65,19 @@ public class TransitDerivedKeyReadiness {
                                       DerivedKeyPolicyRegistry policyRegistry,
                                       TransitRootMetadataCache rootMetadataCache,
                                       ObjectProvider<TboxDeviceCertificateValidator> certValidatorProvider) {
+        this(properties, tokenProvider, transitHmacClient, wrapper, policyRegistry,
+                rootMetadataCache, certValidatorProvider, null, null);
+    }
+
+    public TransitDerivedKeyReadiness(CryptoProperties properties,
+                                      OpenBaoTokenProvider tokenProvider,
+                                      TransitHmacClient transitHmacClient,
+                                      CertificatePublicKeyWrapper wrapper,
+                                      DerivedKeyPolicyRegistry policyRegistry,
+                                      TransitRootMetadataCache rootMetadataCache,
+                                      ObjectProvider<TboxDeviceCertificateValidator> certValidatorProvider,
+                                      EnvelopeAadEncoderRegistry aadEncoderRegistry,
+                                      OperationResultStore resultStore) {
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.tokenProvider = Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
         this.transitHmacClient = Objects.requireNonNull(transitHmacClient, "transitHmacClient must not be null");
@@ -64,6 +85,8 @@ public class TransitDerivedKeyReadiness {
         this.policyRegistry = Objects.requireNonNull(policyRegistry, "policyRegistry must not be null");
         this.rootMetadataCache = Objects.requireNonNull(rootMetadataCache, "rootMetadataCache must not be null");
         this.certValidatorProvider = certValidatorProvider;
+        this.aadEncoderRegistry = aadEncoderRegistry;
+        this.resultStore = resultStore;
     }
 
     /**
@@ -133,6 +156,16 @@ public class TransitDerivedKeyReadiness {
         // 维度 7：本地 Wrap 算法、JCA Provider 与 SecureRandom
         if (!localWrapSelfCheck()) {
             return "WRAP_ALGORITHM_UNAVAILABLE: 本地 Wrap 算法/JCA Provider/SecureRandom 自检失败";
+        }
+
+        // 维度 9：外部 AAD profile + Operation Result Store（FW-SEC-DSN-CR-020 §5）
+        String aadReason = DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                aadEncoderRegistry,
+                properties.getProvisioning().getDerivedKey().getAadProfileId(),
+                resultStore,
+                properties.getProvisioning().getDerivedKey().getResultStore().isAllowInMemory());
+        if (aadReason != null) {
+            return aadReason;
         }
         return null;
     }

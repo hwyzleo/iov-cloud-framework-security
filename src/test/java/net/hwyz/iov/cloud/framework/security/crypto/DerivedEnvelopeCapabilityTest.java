@@ -21,11 +21,62 @@ class DerivedEnvelopeCapabilityTest {
                 DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1));
         assertTrue(DerivedEnvelopeCapability.supports(
                 DerivedEnvelopeCapability.CORE_ENVELOPE_DIGEST_VERIFY_V1));
-        assertEquals(2, DerivedEnvelopeCapability.supported().size());
+        // CR-020：新增 EXTERNAL_AAD_PROFILE_V1 与 AAD_PROFILE[PAR_PROTO_KEYPROV_AAD_V1]（Java 下划线形式）
+        assertEquals(4, DerivedEnvelopeCapability.supported().size());
         assertTrue(DerivedEnvelopeCapability.supported()
                 .contains(DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1));
         assertTrue(DerivedEnvelopeCapability.supported()
                 .contains(DerivedEnvelopeCapability.CORE_ENVELOPE_DIGEST_VERIFY_V1));
+        assertTrue(DerivedEnvelopeCapability.supports(
+                DerivedEnvelopeCapability.EXTERNAL_AAD_PROFILE_V1));
+        assertTrue(DerivedEnvelopeCapability.supports(
+                DerivedEnvelopeCapability.AAD_PROFILE_PAR_PROTO_KEYPROV_AAD_V1));
+    }
+
+    @Test
+    void externalAadProfileWireId_explicitMapping() {
+        // Java 常量下划线形式 ↔ 对外规范化 wire ID 显式映射（不依赖 enum.name() 自动转换）
+        assertEquals("AAD_PROFILE[PAR_PROTO_KEYPROV_AAD_V1]",
+                DerivedEnvelopeCapability.AAD_PROFILE_PAR_PROTO_KEYPROV_AAD_V1_WIRE_ID);
+        assertEquals(DerivedEnvelopeCapability.AAD_PROFILE_PAR_PROTO_KEYPROV_AAD_V1_WIRE_ID,
+                DerivedEnvelopeCapability.wireId(
+                        DerivedEnvelopeCapability.AAD_PROFILE_PAR_PROTO_KEYPROV_AAD_V1));
+        assertEquals(DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1,
+                DerivedEnvelopeCapability.wireId(
+                        DerivedEnvelopeCapability.STRUCTURED_ENVELOPE_VIEW_V1));
+        // supports 接受 wire 形式
+        assertTrue(DerivedEnvelopeCapability.supports(
+                DerivedEnvelopeCapability.AAD_PROFILE_PAR_PROTO_KEYPROV_AAD_V1_WIRE_ID));
+    }
+
+    @Test
+    void externalAadProfileReady_requiresProfileAndResultStore() {
+        net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry registry =
+                net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry.of(
+                        new net.hwyz.iov.cloud.framework.security.crypto.support
+                                .ParProtoKeyprovAadV1Encoder());
+        net.hwyz.iov.cloud.framework.security.crypto.provider.OperationResultStore store =
+                new net.hwyz.iov.cloud.framework.security.crypto.provider.InMemoryOperationResultStore();
+        String profileId = net.hwyz.iov.cloud.framework.security.crypto.support
+                .ParProtoKeyprovAadV1Encoder.PROFILE_ID;
+
+        // 全就绪（dev/test allow-in-memory）
+        assertNull(DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                registry, profileId, store, true));
+        assertTrue(DerivedEnvelopeCapability.externalAadProfileReady(
+                registry, profileId, store, true));
+        // 未配置 profile
+        assertNotNull(DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                registry, null, store, true));
+        // profile 未注册
+        assertNotNull(DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                registry, "UNKNOWN", store, true));
+        // 结果存储缺失
+        assertNotNull(DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                registry, profileId, null, true));
+        // InMemory 未允许 → 生产 DOWN
+        assertNotNull(DerivedEnvelopeCapability.externalAadProfileReadyReason(
+                registry, profileId, store, false));
     }
 
     @Test

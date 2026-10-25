@@ -222,7 +222,8 @@ class CryptoAutoConfigurationTransitDerivedKeyTest {
                 new TestObjectProvider<>(tokenProvider), new TestObjectProvider<>(transitClient),
                 new CertificatePublicKeyWrapper(),
                 new TestObjectProvider<>(registry), new TestObjectProvider<>(cache),
-                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)));
+                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)),
+                new TestObjectProvider<>(), new TestObjectProvider<>());
 
         TransitDerivedKeyHealthIndicator indicator = healthConfiguration.transitDerivedKeyHealthIndicator(
                 properties, new TestObjectProvider<>(readiness));

@@ -10,7 +10,11 @@ import net.hwyz.iov.cloud.framework.security.crypto.exception.TransitException;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.CertificatePublicKeyWrapper;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyCapability;
 import net.hwyz.iov.cloud.framework.security.crypto.provider.DerivedKeyPolicyRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.EnvelopeAadEncoderRegistry;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.InMemoryOperationResultStore;
+import net.hwyz.iov.cloud.framework.security.crypto.provider.OperationResultStore;
 import net.hwyz.iov.cloud.framework.security.crypto.resolver.TestObjectProvider;
+import net.hwyz.iov.cloud.framework.security.crypto.support.ParProtoKeyprovAadV1Encoder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -39,12 +43,18 @@ class TransitDerivedKeyReadinessTest {
     private TransitHmacClient transitClient;
     private TransitRootMetadataCache metadataCache;
     private TransitDerivedKeyReadiness readiness;
+    private EnvelopeAadEncoderRegistry aadRegistry;
+    private OperationResultStore resultStore;
 
     @BeforeEach
     void setUp() {
         properties = new CryptoProperties();
         properties.getProvisioning().getDerivedKey().setDerivationVersion("v1");
         properties.getProvisioning().getDerivedKey().setProvider("openbao-transit-local-wrap");
+        // CR-020：新 V2C ECDH-ES 必须配置外部 AAD profile；dev/test 允许 InMemory 支撑 READY
+        properties.getProvisioning().getDerivedKey().setAadProfileId(
+                ParProtoKeyprovAadV1Encoder.PROFILE_ID);
+        properties.getProvisioning().getDerivedKey().getResultStore().setAllowInMemory(true);
         tokenProvider = mock(OpenBaoTokenProvider.class);
         when(tokenProvider.requireValidToken(any())).thenReturn("tok");
         transitClient = mock(TransitHmacClient.class);
@@ -56,9 +66,12 @@ class TransitDerivedKeyReadinessTest {
         when(transitClient.hmac(anyString(), anyString(), any(), any()))
                 .thenReturn(new TransitHmacResult("v1", new byte[32], "v2c-comm-root"));
         metadataCache = new TransitRootMetadataCache(transitClient, Duration.ofMinutes(1));
+        aadRegistry = EnvelopeAadEncoderRegistry.of(new ParProtoKeyprovAadV1Encoder());
+        resultStore = new InMemoryOperationResultStore();
         readiness = new TransitDerivedKeyReadiness(properties, tokenProvider, transitClient,
                 new CertificatePublicKeyWrapper(), new DerivedKeyPolicyRegistry(), metadataCache,
-                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)));
+                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)),
+                aadRegistry, resultStore);
     }
 
     @Test
@@ -126,8 +139,43 @@ class TransitDerivedKeyReadinessTest {
     void certValidatorMissing_down() {
         readiness = new TransitDerivedKeyReadiness(properties, tokenProvider, transitClient,
                 new CertificatePublicKeyWrapper(), new DerivedKeyPolicyRegistry(), metadataCache,
-                new TestObjectProvider<>());
+                new TestObjectProvider<>(), aadRegistry, resultStore);
         assertTrue(readiness.notReadyReason().startsWith("RECIPIENT_CERTIFICATE_INVALID"));
+    }
+
+    @Test
+    void aadProfileNotConfigured_down() {
+        // CR-020 §6 收紧：新 V2C 未配置 aadProfileId → capability DOWN
+        properties.getProvisioning().getDerivedKey().setAadProfileId(null);
+        assertTrue(readiness.notReadyReason().startsWith("AAD_PROFILE_NOT_CONFIGURED"));
+        assertFalse(readiness.capability().ready());
+    }
+
+    @Test
+    void aadProfileNotRegistered_down() {
+        // 配置了 profile 但 registry 未注册（如 VMD 未提供 encoder）→ fail-closed
+        readiness = new TransitDerivedKeyReadiness(properties, tokenProvider, transitClient,
+                new CertificatePublicKeyWrapper(), new DerivedKeyPolicyRegistry(), metadataCache,
+                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)),
+                EnvelopeAadEncoderRegistry.of(), resultStore);
+        assertTrue(readiness.notReadyReason().startsWith("AAD_PROFILE_UNAVAILABLE"));
+    }
+
+    @Test
+    void resultStoreInMemoryNotAllowed_down() {
+        // 生产要求：InMemory 未显式 allow-in-memory → EXTERNAL_AAD_PROFILE_V1 DOWN（CR-020 §5）
+        properties.getProvisioning().getDerivedKey().getResultStore().setAllowInMemory(false);
+        assertTrue(readiness.notReadyReason().startsWith("RESULT_STORE_UNAVAILABLE"));
+        assertFalse(readiness.capability().ready());
+    }
+
+    @Test
+    void resultStoreMissing_down() {
+        readiness = new TransitDerivedKeyReadiness(properties, tokenProvider, transitClient,
+                new CertificatePublicKeyWrapper(), new DerivedKeyPolicyRegistry(), metadataCache,
+                new TestObjectProvider<>(mock(TboxDeviceCertificateValidator.class)),
+                aadRegistry, null);
+        assertTrue(readiness.notReadyReason().startsWith("RESULT_STORE_UNAVAILABLE"));
     }
 
     @Test

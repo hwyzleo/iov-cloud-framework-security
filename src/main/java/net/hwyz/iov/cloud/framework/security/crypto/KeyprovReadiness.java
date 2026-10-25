@@ -149,6 +149,13 @@ public class KeyprovReadiness {
             return "envelope capabilities not ready "
                     + "(STRUCTURED_ENVELOPE_VIEW_V1 / CORE_ENVELOPE_DIGEST_VERIFY_V1)";
         }
+        // 外部 AAD profile（FW-SEC-DSN-CR-020 §5）：配置后必须声明 EXTERNAL_AAD_PROFILE_V1；
+        // 运行时 SPI/profile/权威向量/result store 能力由 TransitDerivedKey readiness 聚合校验。
+        if (properties.getProvisioning().getDerivedKey().getAadProfileId() != null
+                && !DerivedEnvelopeCapability.supports(DerivedEnvelopeCapability.EXTERNAL_AAD_PROFILE_V1)) {
+            return "EXTERNAL_AAD_PROFILE_V1 capability not declared "
+                    + "(FW-SEC-DSN-CR-020 §5)";
+        }
         // DERIVED_ROOT Transit 本地派生聚合（FW-SEC-DSN-CR-019 §10）：
         // local-wrap 时 TransitDerivedKey readiness 必须 READY；business-key capability 不再门控 DERIVED_ROOT。
         if (DerivedKeyProviderRouter.LOCAL_WRAP_PROVIDER.equals(

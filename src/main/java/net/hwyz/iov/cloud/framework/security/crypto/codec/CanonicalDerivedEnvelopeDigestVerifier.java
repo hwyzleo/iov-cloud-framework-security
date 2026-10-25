@@ -40,7 +40,7 @@ public final class CanonicalDerivedEnvelopeDigestVerifier implements DerivedEnve
     @Override
     public void verify(DerivedWrappedKeyEnvelopeView view) {
         Objects.requireNonNull(view, "envelope view must not be null");
-        byte[] declared = view.envelopeDigest();
+        byte[] declared = view.coreEnvelopeDigest();
         if (declared == null || declared.length != EcdhEsP256EnvelopeViewV1.DIGEST_LENGTH) {
             throw new DerivedEnvelopeIntegrityException(
                     "envelope view must carry a " + EcdhEsP256EnvelopeViewV1.DIGEST_LENGTH

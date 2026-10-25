@@ -749,6 +749,20 @@ public class CryptoProperties {
             private String derivationVersion = "v1";
 
             /**
+             * 外部 AAD profile 标识（FW-SEC-DSN-CR-020 §2）：
+             * 新 V2C ECDH-ES keyprov 必须配置（如 {@code PAR_PROTO_KEYPROV_AAD_V1}），
+             * 由 VMD 注册 {@code EnvelopeAadEncoder} 实现；启动时解析并冻结，禁止运行期热切换。
+             * 未配置时新 V2C operation 直接 fail-closed / capability DOWN（CR-020 §6 收紧），
+             * 不得为新的 V2C operation 静默生成旧 core AAD 信封。
+             */
+            private String aadProfileId;
+
+            /**
+             * Operation 结果存储配置（FW-SEC-DSN-CR-020 §4）。
+             */
+            private ResultStore resultStore = new ResultStore();
+
+            /**
              * 根映射（BizType → transit-key/算法/允许 purpose/WrapMode）。
              * <p>
              * 必须与编译期 BizType allowlist 一致；Nacos 或调用请求不能新增任意 Transit Key。
@@ -777,6 +791,67 @@ public class CryptoProperties {
 
             public void setDerivationVersion(String derivationVersion) {
                 this.derivationVersion = derivationVersion;
+            }
+
+            public String getAadProfileId() {
+                return aadProfileId;
+            }
+
+            public void setAadProfileId(String aadProfileId) {
+                this.aadProfileId = aadProfileId;
+            }
+
+            public ResultStore getResultStore() {
+                return resultStore;
+            }
+
+            public void setResultStore(ResultStore resultStore) {
+                this.resultStore = resultStore == null ? new ResultStore() : resultStore;
+            }
+
+            /**
+             * Operation 结果存储配置（crypto.provisioning.derived-key.result-store.*）。
+             */
+            public static class ResultStore {
+                /**
+                 * 是否启用结果存储（字节级幂等重放，FW-SEC-DSN-CR-020 §4）。
+                 */
+                private boolean enabled = true;
+
+                /**
+                 * 结果记录 TTL（信封至少覆盖请求有效期、设备 ACK 窗口及对账窗口）。
+                 */
+                private java.time.Duration ttl = java.time.Duration.ofDays(30);
+
+                /**
+                 * 是否允许 InMemory 支撑 capability READY（仅 dev/test/联调；生产必须
+                 * 共享、持久化、原子写入的 Result Store，FW-SEC-DSN-CR-020 §5）。
+                 */
+                private boolean allowInMemory = false;
+
+                public boolean isEnabled() {
+                    return enabled;
+                }
+
+                public void setEnabled(boolean enabled) {
+                    this.enabled = enabled;
+                }
+
+                public java.time.Duration getTtl() {
+                    return ttl;
+                }
+
+                public void setTtl(java.time.Duration ttl) {
+                    this.ttl = ttl;
+                }
+
+                public boolean isAllowInMemory() {
+                    return allowInMemory;
+                }
+
+                public void setAllowInMemory(boolean allowInMemory) {
+                    this.allowInMemory = allowInMemory;
+                }
             }
 
             public Map<String, RootPolicy> getRoots() {

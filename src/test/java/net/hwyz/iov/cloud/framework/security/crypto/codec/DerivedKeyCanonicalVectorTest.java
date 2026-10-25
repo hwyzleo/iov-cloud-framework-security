@@ -175,6 +175,49 @@ class DerivedKeyCanonicalVectorTest {
         assertFalse(Arrays.equals(base, differentVersion));
     }
 
+    // ==================== CR-020 版 requestDigest（§4） ====================
+
+    private static final String AAD_PROFILE_ID = "PAR_PROTO_KEYPROV_AAD_V1";
+    private static final byte[] RECIPIENT_DIGEST = bytes(0xD0, 32);
+    private static final String REQUEST_DIGEST_V2_HEX =
+            "c4892d6d578fce1dfa5ce5b73e7efe36c4bc5d354087adf9d26aab09198b343d";
+
+    @Test
+    void requestDigestV2_matchesFrozenVector() {
+        byte[] digest = DerivedKeyRequestDigest.requestDigestV2(
+                AAD_PROFILE_ID, REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, ROOT_KEY_VERSION, DERIVATION_VERSION,
+                SUITE, RECIPIENT_DIGEST);
+        assertEquals(REQUEST_DIGEST_V2_HEX, CanonicalEncoding.hexLower(digest));
+        assertEquals(REQUEST_DIGEST_V2_HEX, DerivedKeyRequestDigest.requestDigestV2Hex(
+                AAD_PROFILE_ID, REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, ROOT_KEY_VERSION, DERIVATION_VERSION,
+                SUITE, RECIPIENT_DIGEST));
+    }
+
+    @Test
+    void requestDigestV2_changesWhenProfileOrGovernedFieldChanges() {
+        byte[] base = DerivedKeyRequestDigest.requestDigestV2(
+                AAD_PROFILE_ID, REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, ROOT_KEY_VERSION, DERIVATION_VERSION,
+                SUITE, RECIPIENT_DIGEST);
+        byte[] differentProfile = DerivedKeyRequestDigest.requestDigestV2(
+                "OTHER_PROFILE", REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, ROOT_KEY_VERSION, DERIVATION_VERSION,
+                SUITE, RECIPIENT_DIGEST);
+        byte[] differentRootVersion = DerivedKeyRequestDigest.requestDigestV2(
+                AAD_PROFILE_ID, REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, 9L, DERIVATION_VERSION,
+                SUITE, RECIPIENT_DIGEST);
+        byte[] differentRecipient = DerivedKeyRequestDigest.requestDigestV2(
+                AAD_PROFILE_ID, REQUEST_ID, BUSINESS_DOMAIN, KeyPurpose.UPLINK_AEAD,
+                LOGICAL_KEY_ID, BUSINESS_KEY_VERSION, ROOT_KEY_VERSION, DERIVATION_VERSION,
+                SUITE, bytes(0xE0, 32));
+        assertFalse(Arrays.equals(base, differentProfile));
+        assertFalse(Arrays.equals(base, differentRootVersion));
+        assertFalse(Arrays.equals(base, differentRecipient));
+    }
+
     // ==================== import proof（§8） ====================
 
     @Test
