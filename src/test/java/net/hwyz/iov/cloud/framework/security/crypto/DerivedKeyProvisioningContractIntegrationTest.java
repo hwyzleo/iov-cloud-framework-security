@@ -110,7 +110,8 @@ class DerivedKeyProvisioningContractIntegrationTest {
 
         DerivedWrappedKey result = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.v1(), "op-1", "idem-1");
+                DerivationContext.v1(), "op-1", "idem-1",
+                        "req-1", "V2C_COMM");
 
         assertNotNull(result);
         assertEquals("logical-1", result.logicalKeyId());
@@ -187,10 +188,12 @@ class DerivedKeyProvisioningContractIntegrationTest {
 
         DerivedWrappedKey first = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.v1(), "op-1", "idem-1");
+                DerivationContext.v1(), "op-1", "idem-1",
+                        "req-1", "V2C_COMM");
         DerivedWrappedKey replay = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.v1(), "op-1", "idem-1");
+                DerivationContext.v1(), "op-1", "idem-1",
+                        "req-1", "V2C_COMM");
 
         assertArrayEquals(first.envelopeBytes(), replay.envelopeBytes());
         assertArrayEquals(first.envelopeDigest(), replay.envelopeDigest());
@@ -206,7 +209,7 @@ class DerivedKeyProvisioningContractIntegrationTest {
                 BusinessKeyIdempotencyConflictException.class, () -> provisioningTemplate.deriveAndWrap(
                         BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
                         new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(),
-                        "op-1", "idem-1"));
+                        "op-1", "idem-1", "req-1", "V2C_COMM"));
         assertFalse(ex.isRetryable());
     }
 
@@ -221,7 +224,8 @@ class DerivedKeyProvisioningContractIntegrationTest {
 
         DerivedWrappedKey result = provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.v1(), "op-1", "idem-1");
+                DerivationContext.v1(), "op-1", "idem-1",
+                        "req-1", "V2C_COMM");
 
         // 敏感信息扫描：信封/KCV 只输出长度，不展开 bytes（CR-014 §10）。
         String description = result.toString() + "|" + built.envelope();
@@ -241,9 +245,11 @@ class DerivedKeyProvisioningContractIntegrationTest {
         RecipientRef recipient = new RecipientRef.DeviceCertificate("cert-001");
 
         provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor, KeyPurpose.UPLINK_AEAD,
-                recipient, DerivationContext.v1(), "op-u", "idem-u");
+                recipient, DerivationContext.v1(), "op-u", "idem-u",
+                "req-u", "V2C_COMM");
         provisioningTemplate.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor, KeyPurpose.DOWNLINK_AEAD,
-                recipient, DerivationContext.v1(), "op-d", "idem-d");
+                recipient, DerivationContext.v1(), "op-d", "idem-d",
+                "req-d", "V2C_COMM");
 
         verify(kmsFeignClient).deriveAndWrap(argThat(r -> "UPLINK_AEAD".equals(r.getPurpose())));
         verify(kmsFeignClient).deriveAndWrap(argThat(r -> "DOWNLINK_AEAD".equals(r.getPurpose())));
@@ -256,7 +262,8 @@ class DerivedKeyProvisioningContractIntegrationTest {
 
         assertThrows(CryptoDependencyUnavailableException.class, () -> provisioningTemplate.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1",
+                        "req-1", "V2C_COMM"));
         verify(cryptoMetrics).recordError();
     }
 

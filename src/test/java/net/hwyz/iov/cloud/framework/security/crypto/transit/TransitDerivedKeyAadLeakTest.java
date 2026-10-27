@@ -82,7 +82,8 @@ class TransitDerivedKeyAadLeakTest {
                 WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
         DerivedWrappedKey result = provider.deriveAndWrap(new DerivedKeyCommand(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD, evidence,
-                DerivationContext.of("v1", 7L), new OperationContext("op-1", "idem-1")));
+                DerivationContext.of("v1", 7L), new OperationContext("op-1", "idem-1"),
+                "req-1", "V2C_COMM"));
 
         String description = result.toString() + "|" + result.envelope().toString();
         assertFalse(description.contains(Base64.getEncoder().encodeToString(result.envelopeBytes())));
@@ -103,7 +104,8 @@ class TransitDerivedKeyAadLeakTest {
                 WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM);
         DerivedWrappedKey result = provider.deriveAndWrap(new DerivedKeyCommand(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD, evidence,
-                DerivationContext.of("v1", 7L), new OperationContext("op-1", "idem-1")));
+                DerivationContext.of("v1", 7L), new OperationContext("op-1", "idem-1"),
+                "req-1", "V2C_COMM"));
 
         java.util.Optional<DerivedWrapResultRecord> record = new InMemoryOperationResultStore(clock)
                 .find("none");

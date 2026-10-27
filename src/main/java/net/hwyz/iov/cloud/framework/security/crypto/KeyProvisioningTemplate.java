@@ -40,11 +40,16 @@ public interface KeyProvisioningTemplate {
      * @param context        派生上下文（派生版本，首期 {@code v1}）
      * @param operationId    客户端生成的 UUIDv7 操作标识（对账主键）
      * @param idempotencyKey 幂等键
+     * @param protocolRequestId    协议层请求标识（keyprov requestId；进入 AAD/HKDF canonical，
+     *                             须与收方证书 enrollment requestId 区分，禁止传入证书申请编号）
+     * @param protocolBusinessDomain 协议层业务域（如 V2C_COMM；区别于 KMS 材料 BizType.name()，
+     *                             禁止传入 bizType.name()）
      * @return 瞬时派生封装结果（含 Wrapped Key 与非敏感元数据）
      */
     DerivedWrappedKey deriveAndWrap(BizType bizType, KeyAnchor anchor, KeyPurpose purpose,
                                     RecipientRef recipient, DerivationContext context,
-                                    String operationId, String idempotencyKey);
+                                    String operationId, String idempotencyKey,
+                                    String protocolRequestId, String protocolBusinessDomain);
 
     /**
      * 派生（按 VIN）

@@ -99,7 +99,8 @@ class TransitDerivedKeyProviderTest {
     private DerivedKeyCommand command(String operationId, KeyPurpose purpose,
                                       ValidatedRecipientEvidence evidence) {
         return new DerivedKeyCommand(BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), purpose, evidence,
-                DerivationContext.of("v1", 7L), new OperationContext(operationId, "idem-" + operationId));
+                DerivationContext.of("v1", 7L), new OperationContext(operationId, "idem-" + operationId),
+                "req-1", "V2C_COMM");
     }
 
     /**
@@ -134,7 +135,7 @@ class TransitDerivedKeyProviderTest {
         assertArrayEquals(DerivedKeyKcv.first3Sha256(transitClient.fixedResult), result.kcv());
         // 信封可由模拟 TBOX SEC/HSM 解封出同一派生材料（自描述，外部 AAD profile 路径）
         byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(pki.leafKeyPair().getPrivate(),
-                toEnvelope(result), "req-1", "V2C_COMM_ROOT");
+                toEnvelope(result), "req-1", "V2C_COMM");
         assertArrayEquals(transitClient.fixedResult, unwrapped);
         assertEquals(3, result.rootKeyVersion());
         assertNotNull(result.envelope());
@@ -156,7 +157,7 @@ class TransitDerivedKeyProviderTest {
         assertEquals(ParProtoKeyprovAadV1Encoder.PROFILE_ID, v.aadProfileId());
         // 外部 AAD 参与 AES-GCM：解封必须使用同一 AAD 才能还原明文
         byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(pki.leafKeyPair().getPrivate(),
-                toEnvelope(result), "req-1", "V2C_COMM_ROOT");
+                toEnvelope(result), "req-1", "V2C_COMM");
         assertArrayEquals(transitClient.fixedResult, unwrapped);
         // core digest 对含外部 AAD 的信封成立
         assertTrue(CanonicalEncoding.constantTimeEquals(v.coreEnvelopeDigest(),

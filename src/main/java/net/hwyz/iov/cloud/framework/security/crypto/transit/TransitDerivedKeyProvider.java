@@ -196,8 +196,8 @@ public class TransitDerivedKeyProvider implements DerivedKeyProvider {
                         net.hwyz.iov.cloud.framework.security.crypto.model
                                 .EcdhEsP256EnvelopeViewV1.FORMAT_VERSION_V1,
                         recipient.validatedWrapSuite(),
-                        recipient.requestId(),
-                        command.bizType().name(),
+                        command.protocolRequestId(),
+                        command.protocolBusinessDomain(),
                         command.purpose(),
                         logicalKeyId,
                         command.context().businessKeyVersion(),
@@ -218,8 +218,8 @@ public class TransitDerivedKeyProvider implements DerivedKeyProvider {
             }
 
             WrapEnvelopeContext envelopeContext = new WrapEnvelopeContext(
-                    recipient.requestId(),
-                    command.bizType().name(),
+                    command.protocolRequestId(),
+                    command.protocolBusinessDomain(),
                     logicalKeyId,
                     command.context().businessKeyVersion(),
                     rootKeyVersion,

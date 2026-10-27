@@ -122,7 +122,8 @@ class TboxCertificateProfileIntegrationTest {
                 new byte[]{1}, new byte[]{3}, new byte[]{2}, "op-1"));
 
         template.deriveAndWrap(BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate(serialOf(leaf)), DerivationContext.v1(), "op-1", "idem-1");
+                new RecipientRef.DeviceCertificate(serialOf(leaf)), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM");
 
         byte[] leafDer = leaf.der();
         verify(kmsClient).deriveAndWrap(any(), any(),
@@ -146,7 +147,7 @@ class TboxCertificateProfileIntegrationTest {
         CertificateProfileRejectedException ex = assertThrows(CertificateProfileRejectedException.class,
                 () -> template.deriveAndWrap(BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN),
                         KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate(serialOf(singleKu)),
-                        DerivationContext.v1(), "op-1", "idem-1"));
+                        DerivationContext.v1(), "op-1", "idem-1", "req-1", "V2C_COMM"));
         assertEquals(CertificateProfileRejectReason.KEY_AGREEMENT_MISSING, ex.rejectReason());
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }
@@ -162,7 +163,7 @@ class TboxCertificateProfileIntegrationTest {
         CertificateProfileRejectedException ex = assertThrows(CertificateProfileRejectedException.class,
                 () -> template.deriveAndWrap(BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN),
                         KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate(serialOf(ca)),
-                        DerivationContext.v1(), "op-1", "idem-1"));
+                        DerivationContext.v1(), "op-1", "idem-1", "req-1", "V2C_COMM"));
         assertEquals(CertificateProfileRejectReason.NOT_END_ENTITY, ex.rejectReason());
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }

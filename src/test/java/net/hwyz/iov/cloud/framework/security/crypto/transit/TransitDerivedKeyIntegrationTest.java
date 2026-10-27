@@ -124,7 +124,8 @@ class TransitDerivedKeyIntegrationTest {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         DerivedWrappedKey result = template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.of("v1", 7L), "op-1", "idem-1");
+                DerivationContext.of("v1", 7L), "op-1", "idem-1",
+                "req-1", "V2C_COMM");
 
         // 固定向量：Transit 收到 openiov|v2c|v1|VIN|UPLINK_AEAD
         assertArrayEquals(("openiov|v2c|v1|" + VIN + "|UPLINK_AEAD")
@@ -148,7 +149,8 @@ class TransitDerivedKeyIntegrationTest {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         assertThrows(TransitException.class, () -> template.deriveAndWrap(BizType.V2C_COMM_ROOT,
                 anchor, KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.of("v1", 7L), "op-1", "idem-1"));
+                DerivationContext.of("v1", 7L), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         // 新 Provider 失败不自动改走 Feign（禁止运行时动态回退，FW-SEC-DSN-CR-019 §12）
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }
@@ -159,7 +161,7 @@ class TransitDerivedKeyIntegrationTest {
         TransitException ex = assertThrows(TransitException.class, () -> template.deriveAndWrap(
                 BizType.IMMO_GROUP_KEY, anchor, KeyPurpose.UPLINK_AEAD,
                 new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.of("v1", 7L),
-                "op-1", "idem-1"));
+                "op-1", "idem-1", "req-1", "V2C_COMM"));
         assertEquals(net.hwyz.iov.cloud.framework.security.crypto.exception.TransitReason.DERIVATION_POLICY_INVALID,
                 ex.transitReason());
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
@@ -171,12 +173,13 @@ class TransitDerivedKeyIntegrationTest {
         KeyAnchor anchor = KeyAnchor.vin(VIN);
         DerivedWrappedKey result = template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.DOWNLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.of("v1", 7L), "op-2", "idem-2");
+                DerivationContext.of("v1", 7L), "op-2", "idem-2",
+                "req-2", "V2C_COMM");
         byte[] keyMaterial = CanonicalEncoding.sha256(transitClient.lastInput);
         // 外部 AAD profile 路径：KDF info 由信封元数据 + 外部上下文构造（协议无关）
-        // 门面证据 requestId 为空（RecipientRef.DeviceCertificate 单参构造）→ kdfInfo 按空串处理
+        // protocolRequestId/businessDomain 进入 KDF info，解封须使用同一对值
         byte[] unwrapped = ReferenceDerivedKeyUnwrapper.unwrapWithInfo(
-                pki.leafKeyPair().getPrivate(), toEnvelope(result), null, "V2C_COMM_ROOT");
+                pki.leafKeyPair().getPrivate(), toEnvelope(result), "req-2", "V2C_COMM");
         assertArrayEquals(keyMaterial, unwrapped);
     }
 

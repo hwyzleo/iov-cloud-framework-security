@@ -30,7 +30,8 @@ class DerivedKeyPolicyRegistryTest {
         return new DerivedKeyCommand(bizType, KeyAnchor.vin("LSVAA4187N2123456"), purpose,
                 ValidatedRecipientEvidenceFixtures.evidenceOrThrow(suite),
                 DerivationContext.of(derivationVersion),
-                new OperationContext("op-1", "idem-1"));
+                new OperationContext("op-1", "idem-1"),
+                "req-1", "V2C_COMM");
     }
 
     @Test
@@ -59,7 +60,8 @@ class DerivedKeyPolicyRegistryTest {
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin("LSVAA4187N2123456"), null,
                 ValidatedRecipientEvidenceFixtures.evidenceOrThrow(
                         WrappingSuite.ECDH_ES_P256_HKDF_SHA256_AES256GCM),
-                DerivationContext.v1(), new OperationContext("op-1", "idem-1")));
+                DerivationContext.v1(), new OperationContext("op-1", "idem-1"),
+                "req-1", "V2C_COMM"));
     }
 
     @Test

@@ -129,7 +129,8 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
     @Override
     public DerivedWrappedKey deriveAndWrap(BizType bizType, KeyAnchor anchor, KeyPurpose purpose,
                                            RecipientRef recipient, DerivationContext context,
-                                           String operationId, String idempotencyKey) {
+                                           String operationId, String idempotencyKey,
+                                           String protocolRequestId, String protocolBusinessDomain) {
         requireDerivedRoot(bizType);
         Objects.requireNonNull(anchor, "anchor must not be null");
         Objects.requireNonNull(purpose, "purpose must not be null");
@@ -137,13 +138,16 @@ public class DefaultKeyProvisioningTemplate implements KeyProvisioningTemplate {
         Objects.requireNonNull(context, "context must not be null");
         requireNonBlank(operationId, "operationId");
         requireNonBlank(idempotencyKey, "idempotencyKey");
+        requireNonBlank(protocolRequestId, "protocolRequestId");
+        requireNonBlank(protocolBusinessDomain, "protocolBusinessDomain");
         validateAnchorLevel(bizType, anchor);
 
         // 门面层完整证书校验 → 不可变已验证收方证据
         ValidatedRecipientEvidence validated = resolveValidatedRecipient(recipient);
         DerivedKeyCommand command = new DerivedKeyCommand(
                 bizType, anchor, purpose, validated, context,
-                new OperationContext(operationId, idempotencyKey));
+                new OperationContext(operationId, idempotencyKey),
+                protocolRequestId, protocolBusinessDomain);
 
         long startTime = System.currentTimeMillis();
         try {

@@ -80,7 +80,8 @@ class DefaultKeyProvisioningTemplateTest {
 
         DerivedWrappedKey result = template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor,
                 KeyPurpose.UPLINK_AEAD, new RecipientRef.DeviceCertificate("cert-001"),
-                DerivationContext.v1(), "op-1", "idem-1");
+                DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM");
 
         assertArrayEquals(new byte[]{9, 8, 7}, result.envelopeBytes());
         assertArrayEquals(new byte[]{1, 2, 3}, result.kcv());
@@ -109,9 +110,11 @@ class DefaultKeyProvisioningTemplateTest {
                 new byte[]{1}, new byte[]{3}, new byte[]{2}, "op"));
 
         template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor, KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-u", "idem-u");
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-u", "idem-u",
+                "req-u", "V2C_COMM");
         template.deriveAndWrap(BizType.V2C_COMM_ROOT, anchor, KeyPurpose.DOWNLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-d", "idem-d");
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-d", "idem-d",
+                "req-d", "V2C_COMM");
 
         verify(kmsClient).deriveAndWrap(any(), argThat(in -> in.purpose() == KeyPurpose.UPLINK_AEAD),
                 any(), any());
@@ -126,7 +129,8 @@ class DefaultKeyProvisioningTemplateTest {
 
         assertThrows(CryptoDependencyUnavailableException.class, () -> template.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         verify(cryptoMetrics).recordError();
     }
 
@@ -136,7 +140,8 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_nonDerivedRootModel_failClosed() {
         assertThrows(KeyMaterialModelMismatchException.class, () -> template.deriveAndWrap(
                 BizType.IDK_KTS_SIGNING, KeyAnchor.uid("SN123"), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }
 
@@ -144,7 +149,8 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_vehicleAnchorRequiresVinAnchor() {
         CryptoException ex = assertThrows(CryptoException.class, () -> template.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.uid("SN123"), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         assertEquals(CryptoException.Reason.INVALID_KEY_ANCHOR, ex.getReason());
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }
@@ -153,7 +159,8 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_deviceAnchorRequiresUidAnchor() {
         CryptoException ex = assertThrows(CryptoException.class, () -> template.deriveAndWrap(
                 BizType.TBOX_DEVICE_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         assertEquals(CryptoException.Reason.INVALID_KEY_ANCHOR, ex.getReason());
     }
 
@@ -161,7 +168,8 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_unsupportedRecipient_failClosed() {
         CryptoException ex = assertThrows(CryptoException.class, () -> template.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.RuntimeIdentity("runtime"), DerivationContext.v1(), "op-1", "idem-1"));
+                new RecipientRef.RuntimeIdentity("runtime"), DerivationContext.v1(), "op-1", "idem-1",
+                "req-1", "V2C_COMM"));
         assertEquals(CryptoException.Reason.UNSUPPORTED_RECIPIENT, ex.getReason());
         verify(kmsClient, never()).deriveAndWrap(any(), any(), any(), any());
     }
@@ -170,10 +178,12 @@ class DefaultKeyProvisioningTemplateTest {
     void deriveAndWrap_blankOperationIdOrIdempotencyKey_failClosed() {
         assertThrows(IllegalArgumentException.class, () -> template.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), " ", "idem-1"));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), " ", "idem-1",
+                "req-1", "V2C_COMM"));
         assertThrows(NullPointerException.class, () -> template.deriveAndWrap(
                 BizType.V2C_COMM_ROOT, KeyAnchor.vin(VIN), KeyPurpose.UPLINK_AEAD,
-                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", null));
+                new RecipientRef.DeviceCertificate("cert-001"), DerivationContext.v1(), "op-1", null,
+                "req-1", "V2C_COMM"));
     }
 
     // ==================== legacy 门面 fail-closed ====================
